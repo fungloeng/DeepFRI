@@ -72,14 +72,60 @@ class Predictor(object):
     def _load_cmap(self, filename, cmap_thresh=10.0):
         if filename.endswith('.pdb'):
             D, seq = load_predicted_PDB(filename)
+            # D 为距离矩阵
             A = np.double(D < cmap_thresh)
+
         elif filename.endswith('.npz'):
-            cmap = np.load(filename)
+            cmap = np.load(filename, allow_pickle=False)
             if 'C_alpha' not in cmap:
                 raise ValueError("C_alpha not in *.npz dict.")
             D = cmap['C_alpha']
-            A = np.double(D < cmap_thresh)
-            seq = str(cmap['seqres'])
+
+            # --- seqres: 构造纯字符串序列（避免 str(array) → \"['M' 'D' ...]\"）---
+            seqres = cmap['seqres']
+            if isinstance(seqres, np.ndarray) and seqres.ndim == 1 and seqres.dtype.kind in ("U", "S"):
+                seq = "".join(seqres.tolist())
+            elif isinstance(seqres, np.ndarray) and seqres.ndim == 0:
+                v = seqres.item()
+                seq = v if isinstance(v, str) else "".join(list(v))
+            elif isinstance(seqres, (list, tuple)):
+                seq = "".join([str(x) for x in seqres])
+            elif isinstance(seqres, str):
+                seq = seqres
+            else:
+                seq = str(seqres)
+            # 规范为大写并过滤到允许字符集
+            allowed = set("ACDEFGHIKLMNPQRSTVWYBXZOU")
+            seq = "".join([c for c in seq.upper() if c in allowed])
+
+            # --- C_alpha: 自动判别二值接触图 vs 距离矩阵 ---
+            # 判别条件：值域在 {0,1}（或 <=1 且离散），视为二值接触图；否则视为距离矩阵
+            is_binary = False
+            try:
+                # 快速启发式：uint8 或 值域 <=1 且唯一值很少
+                uniq = None
+                if np.issubdtype(D.dtype, np.integer) or D.dtype == np.uint8:
+                    uniq = np.unique(D)
+                    is_binary = uniq.size <= 3 and uniq.min() >= 0 and uniq.max() <= 1
+                else:
+                    Dmin, Dmax = float(np.min(D)), float(np.max(D))
+                    if Dmin >= 0.0 and Dmax <= 1.0:
+                        uniq = np.unique(D)
+                        is_binary = uniq.size <= 5
+            except Exception:
+                is_binary = False
+
+            if is_binary:
+                # 你的生成物：0/1 接触图
+                A = (D > 0).astype(np.double)
+            else:
+                # 官方 example：距离矩阵（Å）
+                A = (D < cmap_thresh).astype(np.double)
+
+            # 对角线清 0（避免自环）
+            if A.ndim == 2 and A.shape[0] == A.shape[1]:
+                np.fill_diagonal(A, 0.0)
+
         elif filename.endswith('.pdb.gz'):
             rnd_fn = "".join([secrets.token_hex(10), '.pdb'])
             with gzip.open(filename, 'rb') as f, open(rnd_fn, 'w') as out:
@@ -89,12 +135,13 @@ class Predictor(object):
             os.remove(rnd_fn)
         else:
             raise ValueError("File must be given in *.npz or *.pdb format.")
-        # ##
+
+        # 序列/图形状整理
         S = seq2onehot(seq)
         S = S.reshape(1, *S.shape)
         A = A.reshape(1, *A.shape)
-
         return A, S, seq
+
 
     def predict(self, test_prot, cmap_thresh=10.0, chain='query_prot'):
         print ("### Computing predictions on a single protein...")

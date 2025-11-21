@@ -1,0 +1,21 @@
+2025-11-14 22:36:14.773083: I tensorflow/core/util/util.cc:169] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2025-11-14 22:36:17.392299: I tensorflow/core/platform/cpu_feature_guard.cc:193] This TensorFlow binary is optimized with oneAPI Deep Neural Network Library (oneDNN) to use the following CPU instructions in performance-critical operations:  AVX2 AVX512F AVX512_VNNI FMA
+To enable them in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2025-11-14 22:36:17.999671: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1532] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 30315 MB memory:  -> device: 0, name: NVIDIA vGPU-32GB, pci bus id: 0000:18:00.0, compute capability: 8.9
+Processing PDB files from directory pdb_splits/example/ ...
+MF PDB files:   0%|          | 0/4 [00:00<?, ?it/s]2025-11-14 22:36:20.214396: I tensorflow/stream_executor/cuda/cuda_dnn.cc:384] Loaded cuDNN version 8101
+2025-11-14 22:36:21.028154: I tensorflow/stream_executor/cuda/cuda_blas.cc:1786] TensorFloat-32 will be used for the matrix multiplication. This will only be logged once.
+MF PDB files:  25%|██▌       | 1/4 [00:01<00:04,  1.62s/it]MF PDB files:  50%|█████     | 2/4 [00:01<00:01,  1.34it/s]MF PDB files:  75%|███████▌  | 3/4 [00:01<00:00,  2.18it/s]MF PDB files: 100%|██████████| 4/4 [00:01<00:00,  3.13it/s]MF PDB files: 100%|██████████| 4/4 [00:01<00:00,  2.02it/s]
+### Computing predictions on a single protein...
+### Computing predictions on a single protein...
+### Computing predictions on a single protein...
+### Computing predictions on a single protein...
+### Saving predictions to *.json file...
+### Computing GradCAM for each function of every predicted protein...
+### Computing gradCAM for  transmembrane transporter activity ... [# proteins= 1 ]
+### Computing gradCAM for  inorganic molecular entity transmembrane transporter activity ... [# proteins= 1 ]
+### Computing gradCAM for  ion transmembrane transporter activity ... [# proteins= 1 ]
+### Computing gradCAM for  transporter activity ... [# proteins= 1 ]
+### Saving CAMs to *.json file...
+
+✔ Prediction completed successfully!

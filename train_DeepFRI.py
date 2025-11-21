@@ -13,8 +13,8 @@ from deepfrier.utils import load_GO_annot, load_EC_annot
 if __name__ == "__main__":
     # Training settings
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-gcd', '--gc_dims', type=int, default=[128, 128, 256], nargs='+', help="Dimensions of GraphConv layers.")
-    parser.add_argument('-fcd', '--fc_dims', type=int, default=[], nargs='+', help="Dimensions of fully connected layers (after GraphConv layers).")
+    parser.add_argument('-gcd', '--gc_dims', type=int, default=[512, 512, 512], nargs='+', help="Dimensions of GraphConv layers.")
+    parser.add_argument('-fcd', '--fc_dims', type=int, default=[1024], nargs='+', help="Dimensions of fully connected layers (after GraphConv layers).")
     parser.add_argument('-drop', '--dropout', type=float, default=0.3, help="Dropout rate.")
     parser.add_argument('-l2', '--l2_reg', type=float, default=1e-4, help="L2 regularization coefficient.")
     parser.add_argument('-lr', type=float, default=0.0002, help="Initial learning rate.")
@@ -32,6 +32,7 @@ if __name__ == "__main__":
     parser.add_argument('--valid_tfrecord_fn', type=str, default="/mnt/ceph/users/vgligorijevic/ContactMaps/TFRecords/PDB_GO_valid", help="Valid tfrecords.")
     parser.add_argument('--annot_fn', type=str, default="./preprocessing/data/nrPDB-GO_2019.06.18_annot.tsv", help="File (*tsv) with GO term annotations.")
     parser.add_argument('--test_list', type=str, default="./preprocessing/data/nrPDB-GO_2019.06.18_test.csv", help="File with test PDB chains.")
+    parser.add_argument('--test_npz_dir', type=str, default=None, help="Directory containing test set npz files. If not specified, uses hardcoded path.")
 
     args = parser.parse_args()
     print (args)
@@ -79,7 +80,13 @@ if __name__ == "__main__":
     Y_pred = []
     Y_true = []
     proteins = []
-    path = '/mnt/home/vgligorijevic/Projects/NewMethods/Contact_maps/DeepFRIer2/preprocessing/data/annot_pdb_chains_npz/'
+    # Use provided test_npz_dir or fall back to hardcoded path
+    if args.test_npz_dir is not None:
+        path = args.test_npz_dir
+        if not path.endswith('/') and not path.endswith('\\'):
+            path = path + '/'
+    else:
+        path = '/mnt/home/vgligorijevic/Projects/NewMethods/Contact_maps/DeepFRIer2/preprocessing/data/annot_pdb_chains_npz/'
     with open(args.test_list, mode='r') as csv_file:
         csv_reader = csv.reader(csv_file, delimiter=',')
         next(csv_reader, None)  # header

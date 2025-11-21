@@ -9,7 +9,7 @@ fully_connected_dims="1024"
 graph_conv_layer=GraphConv
 ontology=ec
 cmap_thresh=10.0
-data_dir=/mnt/ceph/users/vgligorijevic/ContactMaps/TFRecords/
+data_dir=/root/autodl-tmp/PDB-EC/
 cmap_data=PDB # possible: PDB, SWISS-MODEL or MERGED
 model_name=./results/DeepFRI-${cmap_data}_${graph_conv_layer}_gcd_$(echo $graph_conv_dims | tr ' ' '-')_fcd_${fully_connected_dims}_ca_${cmap_thresh}_${ontology}
 
@@ -34,7 +34,7 @@ python train_DeepFRI.py \
     -l2 2e-5 \
     -lr 0.0002 \
     -gc ${graph_conv_layer} \
-    -e 50 \
+    -e 5 \
     -ont ${ontology} \
     -lm trained_models/lstm_lm.hdf5 \
     --cmap_type ca \

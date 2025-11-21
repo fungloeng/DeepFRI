@@ -179,7 +179,7 @@ class GenerateTFRecord(object):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-annot', type=str, default='./data/nrPDB-GO_2020.06.18_annot.tsv', help="Input file (*.tsv) with preprocessed annotations.")
+    parser.add_argument('-annot', type=str, default='./data/nrPDB-EC_2020.04_annot.tsv', help="Input file (*.tsv) with preprocessed annotations.")
     parser.add_argument('-ec', help="Use EC annotations.", action="store_true")
     parser.add_argument('-prot_list', type=str, default='./data/nrPDB-GO_2019.06.18_train.txt',
                         help="Input file (*.txt) with a set of protein IDs with distMAps in npz_dir.")

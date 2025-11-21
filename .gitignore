@@ -19,3 +19,16 @@ results
 trained_models/*
 newest_trained/*
 alphafold2
+
+*.tar.gz
+03_run_galaxy/
+04_galaxy_v2/
+*.tsv
+*.txt
+*.csv
+*.tfrecord
+trained_models/
+tfrecords/
+org_galaxy/
+npz_source/
+

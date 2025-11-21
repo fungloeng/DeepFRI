@@ -177,8 +177,7 @@ query_prot GO:0005509 0.99824 calcium ion binding
 
 ## Option 6: predicting functions of a protein from a directory with PDB files
 ```
->> python predict.py --pdb_dir ./examples/pdb_files -ont mf --saliency --use_backprop
-
+python predict.py --pdb_dir ./examples/pdb_files -ont mf --saliency --use_guided_grads 000
 ```
 
 ### Output:
