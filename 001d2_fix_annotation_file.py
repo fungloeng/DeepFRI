@@ -98,7 +98,7 @@ def main():
                        help='注释文件路径')
     parser.add_argument('--prot_list_file', type=str, default='galaxy_deepfri/MF_train.txt',
                        help='蛋白质列表文件路径')
-    parser.add_argument('--ontology', type=str, default='mf', choices=['mf', 'bp', 'cc'],
+    parser.add_argument('--ontology', type=str, default='mf', choices=['mf', 'bp', 'cc', 'pf'],
                        help='Ontology类型')
     
     args = parser.parse_args()

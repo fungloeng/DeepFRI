@@ -75,18 +75,19 @@ def create_deepfri_annotation_file(
     output_file='galaxy_annot.tsv',
     go_graph=None
 ):
-    """生成 DeepFRI 注释文件"""
-    sorted_mf = sorted(all_goterms_mf)
+    """生成 DeepFRI 注释文件（符合原始格式）"""
+    sorted_mf = sorted(all_goterms_mf) if all_goterms_mf else []
     sorted_bp = sorted(all_goterms_bp) if all_goterms_bp else []
     sorted_cc = sorted(all_goterms_cc) if all_goterms_cc else []
 
     mf_names = [get_go_term_name(go, go_graph) for go in sorted_mf]
-    bp_names = [get_go_term_name(go, go_graph) for go in sorted_bp] if sorted_bp else []
-    cc_names = [get_go_term_name(go, go_graph) for go in sorted_cc] if sorted_cc else []
+    bp_names = [get_go_term_name(go, go_graph) for go in sorted_bp]
+    cc_names = [get_go_term_name(go, go_graph) for go in sorted_cc]
 
-    with open(output_file, 'w', newline='') as f:
+    with open(output_file, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, delimiter='\t')
 
+        # 按照原始格式：每个ontology都有GO-terms和GO-names，即使为空
         writer.writerow(["### GO-terms (molecular_function)"])
         writer.writerow(sorted_mf)
         writer.writerow(["### GO-names (molecular_function)"])
@@ -106,9 +107,9 @@ def create_deepfri_annotation_file(
         
         for prot_id in sorted(all_prot2annot.keys()):
             annot = all_prot2annot[prot_id]
-            mf_terms = ','.join(annot.get('mf', []))
-            bp_terms = ','.join(annot.get('bp', []))
-            cc_terms = ','.join(annot.get('cc', []))
+            mf_terms = ','.join(sorted(annot.get('mf', [])))
+            bp_terms = ','.join(sorted(annot.get('bp', [])))
+            cc_terms = ','.join(sorted(annot.get('cc', [])))
             writer.writerow([prot_id, mf_terms, bp_terms, cc_terms])
 
     print(f"已生成注释文件: {output_file}")

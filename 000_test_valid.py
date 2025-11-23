@@ -5,7 +5,7 @@
 步骤：
 1. 将蛋白质列表文件转换为CSV格式
 2. 使用predict_test_set.py进行预测
-3. 使用G5_export_results.py导出结果
+3. 使用000_export_results.py导出结果
 """
 
 import os
@@ -17,9 +17,12 @@ from pathlib import Path
 
 def txt_to_csv(txt_file, csv_file):
     """将TXT格式的蛋白质列表转换为CSV格式"""
+    if not os.path.exists(txt_file):
+        raise FileNotFoundError(f"找不到文件: {txt_file}")
+    
     print(f"转换 {txt_file} -> {csv_file}")
     
-    with open(txt_file, 'r') as f_in, open(csv_file, 'w', newline='') as f_out:
+    with open(txt_file, 'r', encoding='utf-8') as f_in, open(csv_file, 'w', newline='', encoding='utf-8') as f_out:
         writer = csv.writer(f_out)
         writer.writerow(['PDB-chain'])  # 表头
         
@@ -29,7 +32,7 @@ def txt_to_csv(txt_file, csv_file):
                 writer.writerow([prot_id])
     
     # 统计数量
-    with open(csv_file, 'r') as f:
+    with open(csv_file, 'r', encoding='utf-8') as f:
         reader = csv.reader(f)
         next(reader)  # 跳过表头
         count = sum(1 for row in reader)
@@ -45,10 +48,20 @@ def run_prediction(model_name, test_csv, test_npz_dir, annot_fn, ontology='mf',
         output_file = f"results/org_galaxy/{ontology}_predictions.pckl"
     
     # 确保输出目录存在
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    output_dir = os.path.dirname(output_file)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    
+    # 检查必需文件是否存在
+    if not os.path.exists(test_csv):
+        raise FileNotFoundError(f"找不到测试集列表文件: {test_csv}")
+    if not os.path.exists(annot_fn):
+        raise FileNotFoundError(f"找不到注释文件: {annot_fn}")
+    if not os.path.exists(model_name + '.hdf5') and not os.path.exists(model_name + '_best_train_model.h5'):
+        raise FileNotFoundError(f"找不到模型文件: {model_name}.hdf5 或 {model_name}_best_train_model.h5")
     
     cmd = [
-        sys.executable, 'G4_predict_test_set.py',
+        sys.executable, '003_predict_test_set.py',
         '--model_name', model_name,
         '--test_list', test_csv,
         '--test_npz_dir', test_npz_dir,
@@ -69,13 +82,20 @@ def run_prediction(model_name, test_csv, test_npz_dir, annot_fn, ontology='mf',
         print(f"错误: 预测失败，返回码: {result.returncode}")
         return None
     
+    if not os.path.exists(output_file):
+        print(f"错误: 预测结果文件未生成: {output_file}")
+        return None
+    
     return output_file
 
 
 def export_results(results_file, output_prefix):
     """导出结果"""
+    if not os.path.exists(results_file):
+        raise FileNotFoundError(f"找不到预测结果文件: {results_file}")
+    
     cmd = [
-        sys.executable, 'G5_export_results.py',
+        sys.executable, '000_export_results.py',
         '--results_file', results_file,
         '--output_prefix', output_prefix,
         '--threshold', '0.0',
@@ -91,6 +111,13 @@ def export_results(results_file, output_prefix):
     result = subprocess.run(cmd, check=False)
     if result.returncode != 0:
         print(f"错误: 导出失败，返回码: {result.returncode}")
+        return False
+    
+    # 检查输出文件是否生成
+    metrics_file = output_prefix + '.txt'
+    predictions_file = output_prefix + '.tsv'
+    if not os.path.exists(metrics_file) or not os.path.exists(predictions_file):
+        print(f"警告: 部分输出文件未生成")
         return False
     
     return True
@@ -140,7 +167,7 @@ def get_default_paths(ontology, dataset_type='valid', run_number=1):
         'csv_file': f'{ontology_upper}_{dataset_info["name"]}.csv',
         'predictions': f'{ontology_lower}_{dataset_info["name"]}_predictions.pckl',
         'output_base': output_base,  # 用于生成最终的tsv和txt文件名
-        'output_prefix': output_base  # 传递给G5_export_results.py的前缀
+        'output_prefix': output_base  # 传递给000_export_results.py的前缀
     }
 
 

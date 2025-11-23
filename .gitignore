@@ -31,4 +31,9 @@ trained_models/
 tfrecords/
 org_galaxy/
 npz_source/
+*.npz
+cafa/
+galaxy/
+results/
+galaxy_npz_source/
 

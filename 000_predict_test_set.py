@@ -179,7 +179,8 @@ def predict_test_set(model, params, test_list, test_npz_dir, cmap_thresh=10.0,
                 S = S.reshape(1, *S.shape)
                 A = A.reshape(1, *A.shape)
                 
-                # 预测
+                # 预测（与原始代码一致：使用model.predict方法）
+                # model.predict返回的是[0][:, 0]，即第一个样本的所有类别的正类概率
                 y_pred = model.predict([A, S]).reshape(1, output_dim)
                 
                 proteins.append(prot)
@@ -235,7 +236,7 @@ def main():
                        help='距离阈值（默认: 10.0）')
     parser.add_argument('--annot_fn', type=str, default=None,
                        help='注释文件（可选，用于计算真实标签和评估指标）')
-    parser.add_argument('--ontology', type=str, default='cc', choices=['mf', 'bp', 'cc', 'ec'],
+    parser.add_argument('--ontology', type=str, default='cc', choices=['mf', 'bp', 'cc', 'pf','ec'],
                        help='Ontology类型')
     parser.add_argument('--output_file', type=str, default=None,
                        help='输出文件路径（默认: {model_name}_predictions.pckl）')

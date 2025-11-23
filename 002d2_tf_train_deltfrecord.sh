@@ -12,8 +12,8 @@ TFR_DIR="./tfrecords"
 # 注释文件目录
 ANNOT_DIR="galaxy_deepfri"
 
-# 测试集列表
-TEST_LIST="${ANNOT_DIR}/test.csv"
+# 测试集列表（根据ontology动态设置）
+# TEST_LIST="${ANNOT_DIR}/test.csv"  # 将在函数中动态设置
 
 # 模型参数
 GC_LAYER="GraphConv"
@@ -48,6 +48,7 @@ run_ontology() {
         -tfr_prefix ${TFR_DIR}/galaxy_${ONT}_valid
 
     # 训练
+    TEST_LIST="${ANNOT_DIR}/${ONT}_test.csv"
     python train_DeepFRI.py \
         --train_tfrecord_fn ${TFR_DIR}/galaxy_${ONT}_train \
         --valid_tfrecord_fn ${TFR_DIR}/galaxy_${ONT}_valid \

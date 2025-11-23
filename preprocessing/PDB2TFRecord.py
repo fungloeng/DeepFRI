@@ -1,6 +1,7 @@
 import csv
 import os.path
 import argparse
+import re
 
 import numpy as np
 import tensorflow as tf
@@ -38,41 +39,63 @@ def load_list(fname):
     return pdb_chain_list
 
 
+LABEL_TO_KEY = {
+    'molecular_function': 'molecular_function',
+    'biological_process': 'biological_process',
+    'cellular_component': 'cellular_component',
+    'primary_function': 'primary_function'
+}
+
+
+def _parse_label(text):
+    match = re.search(r'\(([^)]+)\)', text)
+    if match:
+        return match.group(1).strip().lower()
+    return text.strip().lower()
+
+
 def load_GO_annot(filename):
-    """ Load GO annotations """
-    onts = ['molecular_function', 'biological_process', 'cellular_component']
+    """ Load GO annotations (supports optional PF section) """
+    onts = list(LABEL_TO_KEY.values())
     prot2annot = {}
     goterms = {ont: [] for ont in onts}
     gonames = {ont: [] for ont in onts}
     with open(filename, mode='r') as tsvfile:
         reader = csv.reader(tsvfile, delimiter='\t')
 
-        # molecular function
-        next(reader, None)  # skip the headers
-        goterms[onts[0]] = next(reader)
-        next(reader, None)  # skip the headers
-        gonames[onts[0]] = next(reader)
+        # 读取所有 GO term sections
+        while True:
+            row = next(reader)
+            if not row:
+                continue
+            if row[0].startswith("### PDB-chain"):
+                header_row = row
+                break
+            if row[0].startswith("### GO-terms"):
+                label = _parse_label(row[0])
+                key = LABEL_TO_KEY.get(label)
+                terms = next(reader)
+                next(reader, None)  # skip GO-names header
+                names = next(reader)
+                if key:
+                    goterms[key] = terms
+                    gonames[key] = names
+                continue
 
-        # biological process
-        next(reader, None)  # skip the headers
-        goterms[onts[1]] = next(reader)
-        next(reader, None)  # skip the headers
-        gonames[onts[1]] = next(reader)
+        # 每一列对应的 ont key
+        column_keys = [LABEL_TO_KEY.get(_parse_label(col), None) for col in header_row[1:]]
 
-        # cellular component
-        next(reader, None)  # skip the headers
-        goterms[onts[2]] = next(reader)
-        next(reader, None)  # skip the headers
-        gonames[onts[2]] = next(reader)
-
-        next(reader, None)  # skip the headers
         for row in reader:
-            prot, prot_goterms = row[0], row[1:]
-            prot2annot[prot] = {ont: [] for ont in onts}
-            for i in range(3):
-                goterm_indices = [goterms[onts[i]].index(goterm) for goterm in prot_goterms[i].split(',') if goterm != '']
-                prot2annot[prot][onts[i]] = np.zeros(len(goterms[onts[i]]), dtype=np.int64)
-                prot2annot[prot][onts[i]][goterm_indices] = 1.0
+            if not row:
+                continue
+            prot = row[0]
+            prot2annot[prot] = {ont: np.zeros(len(goterms[ont]), dtype=np.int64) for ont in onts}
+            for value, key in zip(row[1:], column_keys):
+                if key is None or len(goterms[key]) == 0 or value == '':
+                    continue
+                indices = [goterms[key].index(goterm) for goterm in value.split(',') if goterm]
+                if indices:
+                    prot2annot[prot][key][indices] = 1.0
     return prot2annot, goterms, gonames
 
 
@@ -140,6 +163,10 @@ class GenerateTFRecord(object):
             d_feature['mf_labels'] = labels(self.prot2annot[prot_id]['molecular_function'])
             d_feature['bp_labels'] = labels(self.prot2annot[prot_id]['biological_process'])
             d_feature['cc_labels'] = labels(self.prot2annot[prot_id]['cellular_component'])
+            # 如果存在 primary_function（注释文件包含PF部分），也序列化 pf_labels
+            # 这确保了训练PF模型时所有TFRecord记录都包含pf_labels
+            if 'primary_function' in self.prot2annot[prot_id] and len(self.prot2annot[prot_id]['primary_function']) > 0:
+                d_feature['pf_labels'] = labels(self.prot2annot[prot_id]['primary_function'])
 
         d_feature['ca_dist_matrix'] = self._float_feature(ca_dist_matrix.reshape(-1))
         d_feature['cb_dist_matrix'] = self._float_feature(cb_dist_matrix.reshape(-1))

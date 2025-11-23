@@ -38,7 +38,7 @@ python train_DeepFRI.py \
     --test_list galaxy_deepfri/test.csv \
     --test_npz_dir $NPZ_DIR \
     --ontology mf \
-    --model_name trained_models/alaxyModel_MF \
+    --model_name trained_models/GalaxyModel_MF \
     --gc_layer GraphConv \
     --epochs 5 \
     --batch_size 1
@@ -68,10 +68,10 @@ python train_DeepFRI.py \
     --train_tfrecord_fn $TFRECORD_DIR/galaxy_cc_train \
     --valid_tfrecord_fn $TFRECORD_DIR/galaxy_cc_valid \
     --annot_fn galaxy_deepfri/galaxy_cc_annot.tsv \
-    --test_list galaxy_deepfri/test.csv \
+    --test_list galaxy_deepfri/CC_test.csv \
     --test_npz_dir $NPZ_DIR \
     --ontology cc \
-    --model_name trained_models/alaxyModel_CC \
+    --model_name trained_models/GalaxyModel_CC \
     --gc_layer GraphConv \
     --epochs 5 \
     --batch_size 1
@@ -101,10 +101,10 @@ python train_DeepFRI.py \
     --train_tfrecord_fn $TFRECORD_DIR/galaxy_bp_train \
     --valid_tfrecord_fn $TFRECORD_DIR/galaxy_bp_valid \
     --annot_fn galaxy_deepfri/galaxy_bp_annot.tsv \
-    --test_list galaxy_deepfri/test.csv \
+    --test_list galaxy_deepfri/BP_test.csv \
     --test_npz_dir $NPZ_DIR \
     --ontology bp \
-    --model_name trained_models/alaxyModel_BP \
+    --model_name trained_models/GalaxyModel_BP \
     --gc_layer GraphConv \
     --epochs 5 \
     --batch_size 1

@@ -1,6 +1,7 @@
 import csv
 import json
 import pickle
+import os
 
 import argparse
 import numpy as np
@@ -23,7 +24,7 @@ if __name__ == "__main__":
     parser.add_argument('-e', '--epochs', type=int, default=200, help="Number of epochs to train.")
     parser.add_argument('-bs', '--batch_size', type=int, default=64, help="Batch size.")
     parser.add_argument('-pd', '--pad_len', type=int, help="Padd length (max len of protein sequences in train set).")
-    parser.add_argument('-ont', '--ontology', type=str, default='mf', choices=['mf', 'bp', 'cc', 'ec'], help="Ontology.")
+    parser.add_argument('-ont', '--ontology', type=str, default='mf', choices=['mf', 'bp', 'cc', 'pf', 'ec'], help="Ontology.")
     parser.add_argument('-lm', '--lm_model_name', type=str, help="Path to the pretraned LSTM-Language Model.")
     parser.add_argument('--cmap_type', type=str, default='ca', choices=['ca', 'cb'], help="Contact maps type.")
     parser.add_argument('--cmap_thresh', type=float, default=10.0, help="Distance cutoff for thresholding contact maps.")
@@ -90,9 +91,18 @@ if __name__ == "__main__":
     with open(args.test_list, mode='r') as csv_file:
         csv_reader = csv.reader(csv_file, delimiter=',')
         next(csv_reader, None)  # header
+        skipped_count = 0
         for row in csv_reader:
             prot = row[0]
-            cmap = np.load(path + prot + '.npz')
+            npz_file = path + prot + '.npz'
+            
+            # 检查文件是否存在，如果不存在则跳过
+            if not os.path.isfile(npz_file):
+                print(f"Warning: NPZ file not found, skipping {prot}: {npz_file}")
+                skipped_count += 1
+                continue
+            
+            cmap = np.load(npz_file)
             sequence = str(cmap['seqres'])
             Ca_dist = cmap['C_alpha']
 
@@ -107,6 +117,9 @@ if __name__ == "__main__":
             proteins.append(prot)
             Y_pred.append(model.predict([A, S]).reshape(1, output_dim))
             Y_true.append(prot2annot[prot][args.ontology].reshape(1, output_dim))
+        
+        if skipped_count > 0:
+            print(f"### Skipped {skipped_count} proteins due to missing NPZ files")
 
     pickle.dump({'proteins': np.asarray(proteins),
                  'Y_pred': np.concatenate(Y_pred, axis=0),

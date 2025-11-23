@@ -17,6 +17,7 @@ import pickle
 import numpy as np
 import argparse
 import csv
+import os
 from sklearn.metrics import average_precision_score, precision_recall_curve, f1_score
 from collections import defaultdict
 try:
@@ -38,88 +39,111 @@ def load_results(results_file):
     return results
 
 
-def calculate_fmax(Y_true, Y_pred, thresholds=None):
+def calculate_metrics_adaptive_threshold(Y_true, Y_pred, thresholds=None):
     """
-    计算Fmax（在不同阈值下的最大F1分数）
+    参考 evaluate_deepgoplus2.py 的方式，遍历阈值计算 Fmax、Smin 和 AUPR
     
-    Fmax = max_t F1(t)，其中F1(t)是在阈值t下的F1分数
+    返回: (fmax, fmax_threshold, smin, smin_threshold, aupr, precisions, recalls)
     """
     if thresholds is None:
-        thresholds = np.arange(0.0, 1.01, 0.01)
+        # 参考 evaluate_deepgoplus2.py，使用 0.01 到 1.00 的阈值
+        thresholds = np.arange(0.01, 1.01, 0.01)
     
     fmax = 0.0
-    best_threshold = 0.0
+    fmax_threshold = 0.0
+    smin = float('inf')
+    smin_threshold = 0.0
+    precisions = []
+    recalls = []
     
     y_true_flat = Y_true.flatten()
-    
-    for threshold in tqdm(thresholds, desc="计算Fmax", disable=not HAS_TQDM):
-        Y_pred_binary = (Y_pred >= threshold).astype(int)
-        
-        # 计算micro-average F1
-        y_pred_flat = Y_pred_binary.flatten()
-        
-        if np.sum(y_pred_flat) > 0 or np.sum(y_true_flat) > 0:
-            f1 = f1_score(y_true_flat, y_pred_flat, zero_division=0)
-            if f1 > fmax:
-                fmax = f1
-                best_threshold = threshold
-    
-    return fmax, best_threshold
-
-
-def calculate_smin(Y_true, Y_pred, thresholds=None):
-    """
-    计算Smin（语义距离的最小值，Minimum Semantic Distance）
-    
-    Smin = min_t [RU(t) + MI(t)]，其中：
-    - RU(t) = Remaining Uncertainty（剩余不确定性）：真实为正但预测为负的比例
-    - MI(t) = Misinformation（错误信息）：真实为负但预测为正的比例
-    
-    这是CAFA评估中使用的指标
-    """
-    if thresholds is None:
-        thresholds = np.arange(0.0, 1.01, 0.01)
-    
-    # 计算剩余不确定性和错误信息
-    smin = float('inf')
-    best_threshold = 0.0
-    
     total_positives = np.sum(Y_true == 1)
     total_negatives = np.sum(Y_true == 0)
     
     if total_positives == 0:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, [], []
     
-    for threshold in tqdm(thresholds, desc="计算Smin", disable=not HAS_TQDM):
+    # 遍历所有阈值
+    for threshold in tqdm(thresholds, desc="计算评估指标", disable=not HAS_TQDM):
         Y_pred_binary = (Y_pred >= threshold).astype(int)
+        y_pred_flat = Y_pred_binary.flatten()
         
-        # 剩余不确定性：真实为正但预测为负的数量 / 总正样本数
-        ru = np.sum((Y_true == 1) & (Y_pred_binary == 0)) / (total_positives + 1e-10)
+        # 计算 Precision 和 Recall
+        tp = np.sum((Y_true == 1) & (Y_pred_binary == 1))
+        fp = np.sum((Y_true == 0) & (Y_pred_binary == 1))
+        fn = np.sum((Y_true == 1) & (Y_pred_binary == 0))
         
-        # 错误信息：真实为负但预测为正的数量 / 总负样本数
-        mi = np.sum((Y_true == 0) & (Y_pred_binary == 1)) / (total_negatives + 1e-10)
+        # Precision
+        if tp + fp > 0:
+            prec = tp / (tp + fp)
+        else:
+            prec = 0.0
         
-        # Smin = RU + MI
-        s = ru + mi
+        # Recall
+        if tp + fn > 0:
+            rec = tp / (tp + fn)
+        else:
+            rec = 0.0
         
+        precisions.append(prec)
+        recalls.append(rec)
+        
+        # 计算 F1 分数
+        if prec + rec > 0:
+            f1 = 2 * prec * rec / (prec + rec)
+        else:
+            f1 = 0.0
+        
+        # 更新 Fmax
+        if f1 > fmax:
+            fmax = f1
+            fmax_threshold = threshold
+        
+        # 计算 Smin（语义距离）
+        # RU = Remaining Uncertainty（剩余不确定性）
+        ru = fn / (total_positives + 1e-10)
+        # MI = Misinformation（错误信息）
+        mi = fp / (total_negatives + 1e-10)
+        # S = sqrt(RU^2 + MI^2) - 参考 evaluate_deepgoplus2.py 的 evaluate_annotations
+        s = np.sqrt(ru * ru + mi * mi)
+        
+        # 更新 Smin
         if s < smin:
             smin = s
-            best_threshold = threshold
+            smin_threshold = threshold
     
-    return smin, best_threshold
-
-
-def calculate_aupr(Y_true, Y_pred):
-    """计算AUPR（Area Under Precision-Recall Curve）"""
-    try:
-        aupr = average_precision_score(Y_true.flatten(), Y_pred.flatten())
-        return aupr
-    except:
-        return 0.0
+    # 计算 AUPR（Area Under Precision-Recall Curve）
+    # 需要按 recall 排序后计算曲线下面积
+    precisions = np.array(precisions)
+    recalls = np.array(recalls)
+    
+    # 按 recall 排序
+    sorted_index = np.argsort(recalls)
+    recalls_sorted = recalls[sorted_index]
+    precisions_sorted = precisions[sorted_index]
+    
+    # 使用梯形法则计算 AUPR
+    aupr = np.trapz(precisions_sorted, recalls_sorted)
+    
+    return fmax, fmax_threshold, smin, smin_threshold, aupr, precisions, recalls
 
 
 def export_metrics(results, output_file, threshold=0.5):
-    """导出评估指标到txt文件"""
+    """
+    导出评估指标到txt文件
+    参考 evaluate_deepgoplus2.py 的方式，使用自适应阈值计算指标
+    
+    输出格式：
+    threshold: <fmax_threshold>
+    Smin: <smin_value>
+    Fmax: <fmax_value>
+    AUPR: <aupr_value>
+    """
+    # 确保输出目录存在
+    output_dir = os.path.dirname(output_file)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+    
     Y_pred = results['Y_pred']
     Y_true = results.get('Y_true', None)
     has_true_labels = results.get('has_true_labels', Y_true is not None and Y_true.size > 0)
@@ -128,37 +152,48 @@ def export_metrics(results, output_file, threshold=0.5):
         print("警告: 没有真实标签，无法计算评估指标")
         print("将使用默认值或仅输出预测结果")
         with open(output_file, 'w') as f:
-            f.write(f"threshold\t{threshold}\n")
-            f.write(f"Smin\tN/A\n")
-            f.write(f"Fmax\tN/A\n")
-            f.write(f"AUPR\tN/A\n")
+            f.write(f"threshold: N/A\n")
+            f.write(f"Smin: N/A\n")
+            f.write(f"Fmax: N/A\n")
+            f.write(f"AUPR: N/A\n")
         return
     
-    # 计算指标
-    print("计算评估指标...")
+    # 计算指标（使用自适应阈值）
+    print("计算评估指标（遍历阈值寻找最优值）...")
     
-    # AUPR
-    aupr = calculate_aupr(Y_true, Y_pred)
+    fmax, fmax_threshold, smin, smin_threshold, aupr, precisions, recalls = \
+        calculate_metrics_adaptive_threshold(Y_true, Y_pred)
+    
+    print(f"  Fmax: {fmax:.4f} (threshold: {fmax_threshold:.4f})")
+    print(f"  Smin: {smin:.4f} (threshold: {smin_threshold:.4f})")
     print(f"  AUPR: {aupr:.4f}")
     
-    # Fmax
-    fmax, fmax_threshold = calculate_fmax(Y_true, Y_pred)
-    print(f"  Fmax: {fmax:.4f} (threshold: {fmax_threshold:.4f})")
+    # 使用 Fmax 对应的阈值作为主要阈值（参考 evaluate_deepgoplus2.py）
+    best_threshold = fmax_threshold
     
-    # Smin
-    smin, smin_threshold = calculate_smin(Y_true, Y_pred)
-    print(f"  Smin: {smin:.4f} (threshold: {smin_threshold:.4f})")
-    
-    # 写入文件（一行格式，制表符分隔）
+    # 写入文件（参考 evaluate_deepgoplus2.py 的格式）
     with open(output_file, 'w') as f:
-        f.write(f"threshold\tSmin\tFmax\tAUPR\n")
-        f.write(f"{threshold:.6f}\t{smin:.6f}\t{fmax:.6f}\t{aupr:.6f}\n")
+        f.write(f"threshold: {best_threshold}\n")
+        f.write(f"Smin: {smin:.3f}\n")
+        f.write(f"Fmax: {fmax:.3f}\n")
+        f.write(f"AUPR: {aupr:.3f}\n")
     
     print(f"\n评估指标已保存到: {output_file}")
+    print(f"  使用阈值: {best_threshold:.4f} (Fmax对应的阈值)")
 
 
 def export_predictions_tsv(results, output_file, threshold=0.0):
-    """导出预测结果到TSV文件（只输出超过阈值的预测）"""
+    """
+    导出预测结果到TSV文件
+    
+    注意：此函数使用 threshold=0.0 来输出所有预测结果（不进行过滤）
+    这与计算指标时使用的自适应阈值不同
+    """
+    # 确保输出目录存在
+    output_dir = os.path.dirname(output_file)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+    
     proteins = results['proteins']
     Y_pred = results['Y_pred']
     goterms = results['goterms']
@@ -166,7 +201,7 @@ def export_predictions_tsv(results, output_file, threshold=0.0):
     print(f"导出预测结果到TSV文件...")
     print(f"  蛋白质数量: {len(proteins)}")
     print(f"  GO terms数量: {len(goterms)}")
-    print(f"  阈值: {threshold}")
+    print(f"  阈值: {threshold} (输出所有预测结果，不进行过滤)")
     
     with open(output_file, 'w', newline='') as f:
         writer = csv.writer(f, delimiter='\t')
@@ -184,7 +219,7 @@ def export_predictions_tsv(results, output_file, threshold=0.0):
             for j in indices:
                 goterm = goterms[j]
                 score = float(y_pred[j])
-                # 只输出超过阈值的预测
+                # 使用 threshold=0.0，输出所有预测结果（不进行过滤）
                 if score >= threshold:
                     writer.writerow([prot, goterm, score])
                     n_predictions += 1
@@ -236,9 +271,9 @@ def main():
     parser.add_argument('--output_prefix', type=str, default='results',
                        help='输出文件前缀（将生成 {prefix}.txt 和 {prefix}.tsv）')
     parser.add_argument('--threshold', type=float, default=0.0,
-                       help='预测阈值（用于过滤predictions，默认0.0输出所有分数）')
-    parser.add_argument('--metrics_threshold', type=float, default=0.5,
-                       help='用于计算metrics的阈值（默认0.5）')
+                       help='TSV输出阈值（用于过滤predictions，默认0.0输出所有分数）')
+    # parser.add_argument('--metrics_threshold', type=float, default=None,
+                       # help='已废弃：指标计算现在使用自适应阈值，此参数将被忽略')
     
     args = parser.parse_args()
     
@@ -254,9 +289,10 @@ def main():
     results = load_results(args.results_file)
     
     # 导出评估指标（新格式: {prefix}.txt）
+    # 注意：现在使用自适应阈值计算指标，不再使用 metrics_threshold 参数
     metrics_file = args.output_prefix + '.txt'
-    print(f"\n步骤1: 导出评估指标...")
-    export_metrics(results, metrics_file, args.metrics_threshold)
+    print(f"\n步骤1: 导出评估指标（使用自适应阈值）...")
+    export_metrics(results, metrics_file, threshold=None)  # threshold 参数已废弃
     
     # 导出预测结果（新格式: {prefix}.tsv）
     predictions_file = args.output_prefix + '.tsv'
