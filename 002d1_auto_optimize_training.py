@@ -69,18 +69,87 @@ def collect_lengths(proteins, npz_dir):
     missing = []
     failures = []
     
-    for prot in proteins:
+    # 检查目录是否存在
+    if not os.path.exists(npz_dir):
+        print(f"错误: NPZ目录不存在: {npz_dir}")
+        return lengths, missing, failures
+    
+    if not os.path.isdir(npz_dir):
+        print(f"错误: 指定的路径不是目录: {npz_dir}")
+        return lengths, missing, failures
+    
+    print(f"正在从 {npz_dir} 读取NPZ文件...")
+    print(f"蛋白质总数: {len(proteins)}")
+    
+    # 诊断：检查NPZ目录中的实际文件格式
+    print(f"\n诊断信息:")
+    try:
+        import glob
+        sample_files = glob.glob(os.path.join(npz_dir, "*.npz"))[:10]
+        if sample_files:
+            print(f"  NPZ目录中找到 {len(glob.glob(os.path.join(npz_dir, '*.npz')))} 个文件")
+            print(f"  示例文件名（前5个）:")
+            for f in sample_files[:5]:
+                basename = os.path.basename(f)
+                print(f"    {basename}")
+        else:
+            print(f"  警告: NPZ目录中没有找到任何.npz文件！")
+    except Exception as e:
+        print(f"  无法列出NPZ文件: {e}")
+    
+    # 检查蛋白质ID格式
+    if proteins:
+        print(f"  蛋白质ID示例（前5个）:")
+        for prot in proteins[:5]:
+            print(f"    {prot}")
+        print(f"  预期文件名格式: {proteins[0]}.npz")
+        print()
+    
+    for i, prot in enumerate(proteins):
+        if (i + 1) % 1000 == 0:
+            print(f"  已处理: {i+1}/{len(proteins)}, 成功: {len(lengths)}, 缺失: {len(missing)}, 失败: {len(failures)}")
+        
+        # 尝试多种可能的文件名格式
         npz_path = os.path.join(npz_dir, prot + '.npz')
+        
+        # 如果标准格式不存在，尝试其他可能的格式
         if not os.path.exists(npz_path):
-            missing.append(prot)
-            continue
+            # 尝试小写
+            npz_path_lower = os.path.join(npz_dir, prot.lower() + '.npz')
+            if os.path.exists(npz_path_lower):
+                npz_path = npz_path_lower
+            else:
+                # 尝试大写
+                npz_path_upper = os.path.join(npz_dir, prot.upper() + '.npz')
+                if os.path.exists(npz_path_upper):
+                    npz_path = npz_path_upper
+                else:
+                    missing.append(prot)
+                    continue
         try:
             import numpy as np
             data = np.load(npz_path)
             seq = data['seqres']
             lengths.append(len(str(seq)))
+            data.close()  # 关闭文件
         except Exception as exc:
             failures.append(f"{prot}: {exc}")
+    
+    print(f"\n统计结果:")
+    print(f"  成功读取: {len(lengths)}")
+    print(f"  缺失文件: {len(missing)}")
+    print(f"  读取失败: {len(failures)}")
+    
+    if len(missing) > 0 and len(missing) <= 10:
+        print(f"  缺失文件示例: {missing[:10]}")
+    elif len(missing) > 10:
+        print(f"  缺失文件示例（前10个）: {missing[:10]}")
+    
+    if len(failures) > 0 and len(failures) <= 10:
+        print(f"  失败示例: {failures[:10]}")
+    elif len(failures) > 10:
+        print(f"  失败示例（前10个）: {failures[:10]}")
+    
     return lengths, missing, failures
 
 
@@ -98,7 +167,16 @@ def find_optimal_pad_len(prot_list_file, npz_dir, max_memory_gb=8, target_percen
     lengths, missing, failures = collect_lengths(proteins, npz_dir)
     
     if not lengths:
-        print("错误: 无法读取任何npz文件")
+        print("\n错误: 无法读取任何npz文件")
+        print("可能的原因:")
+        print("  1. NPZ文件不存在于指定目录")
+        print("  2. 文件名格式不匹配")
+        print("  3. 路径不正确")
+        print(f"\n建议:")
+        print(f"  1. 检查NPZ目录: {npz_dir}")
+        print(f"  2. 运行: ls {npz_dir} | head -10 查看实际文件名格式")
+        print(f"  3. 检查蛋白质列表文件中的ID格式")
+        print(f"  4. 如果NPZ文件确实不存在，可以跳过自动优化，使用默认参数训练")
         return None
     
     arr = np.array(lengths)
@@ -249,8 +327,8 @@ def generate_training_command(prot_list_file, npz_dir, annot_file, test_list,
     
     cmd = [
         'python', 'train_DeepFRI.py',
-        '--train_tfrecord_fn', f'{tfr_dir}/galaxy_{ontology}_train',
-        '--valid_tfrecord_fn', f'{tfr_dir}/galaxy_{ontology}_valid',
+        '--train_tfrecord_fn', f'{tfr_dir}/cafa_{ontology}_train',
+        '--valid_tfrecord_fn', f'{tfr_dir}/cafa_{ontology}_valid',
         '--annot_fn', annot_file,
         '--test_list', test_list,
         '--test_npz_dir', npz_dir_env,

@@ -14,13 +14,17 @@ def seq2onehot(seq):
              'V', 'S', 'O', 'I', 'E', 'F', 'X', 'Q', 'A', 'B', 'Z', 'R', 'M']
     vocab_size = len(chars)
     vocab_embed = dict(zip(chars, range(vocab_size)))
+    # Use '-' (index 0) as default for unknown characters
+    default_char = '-'
+    default_idx = vocab_embed[default_char]
 
     # Convert vocab to one-hot
     vocab_one_hot = np.zeros((vocab_size, vocab_size), int)
     for _, val in vocab_embed.items():
         vocab_one_hot[val, val] = 1
 
-    embed_x = [vocab_embed[v] for v in seq]
+    # Map each character to its index, using default for unknown chars
+    embed_x = [vocab_embed.get(v, default_idx) for v in seq]
     seqs_x = np.array([vocab_one_hot[j, :] for j in embed_x])
 
     return seqs_x
@@ -93,7 +97,15 @@ def load_GO_annot(filename):
             for value, key in zip(row[1:], column_keys):
                 if key is None or len(goterms[key]) == 0 or value == '':
                     continue
-                indices = [goterms[key].index(goterm) for goterm in value.split(',') if goterm]
+                # Handle missing GO terms gracefully
+                indices = []
+                for goterm in value.split(','):
+                    goterm = goterm.strip()
+                    if goterm and goterm in goterms[key]:
+                        indices.append(goterms[key].index(goterm))
+                    elif goterm:
+                        # Log warning for missing GO terms but continue processing
+                        print(f"Warning: GO term '{goterm}' not found in {key} list for protein {prot}. Skipping.")
                 if indices:
                     prot2annot[prot][key][indices] = 1.0
     return prot2annot, goterms, gonames
@@ -187,13 +199,47 @@ class GenerateTFRecord(object):
                 print ("### Iter = %d/%d" % (i, len(tmp_prot_list)))
             pdb_file = self.npz_dir + '/' + prot + '.npz'
             if os.path.isfile(pdb_file):
+                # Load data and immediately close file
                 cmap = np.load(pdb_file)
-                sequence = str(cmap['seqres'])
-                ca_dist_matrix = cmap['C_alpha']
-                cb_dist_matrix = cmap['C_beta']
-
+                try:
+                    # Properly convert seqres to string (handle numpy arrays correctly)
+                    seqres = cmap['seqres']
+                    if isinstance(seqres, np.ndarray) and seqres.ndim == 1 and seqres.dtype.kind in ("U", "S"):
+                        sequence = "".join(seqres.tolist())
+                    elif isinstance(seqres, np.ndarray) and seqres.ndim == 0:
+                        v = seqres.item()
+                        sequence = v if isinstance(v, str) else "".join(list(v))
+                    elif isinstance(seqres, (list, tuple)):
+                        sequence = "".join([str(x) for x in seqres])
+                    elif isinstance(seqres, str):
+                        sequence = seqres
+                    else:
+                        sequence = str(seqres)
+                    
+                    # Filter to allowed amino acid characters and convert to uppercase
+                    allowed = set("ACDEFGHIKLMNPQRSTVWYBXZOU-")
+                    sequence = "".join([c for c in sequence.upper() if c in allowed])
+                    
+                    if len(sequence) == 0:
+                        print(f"Warning: {prot} has empty sequence after filtering, skipping")
+                        continue
+                    
+                    ca_dist_matrix = cmap['C_alpha'].copy()  # Copy to avoid keeping file open
+                    # Handle missing C_beta: use C_alpha as fallback
+                    if 'C_beta' in cmap:
+                        cb_dist_matrix = cmap['C_beta'].copy()
+                    else:
+                        # If C_beta is missing, use C_alpha as substitute
+                        cb_dist_matrix = ca_dist_matrix.copy()
+                        if i < 5:  # Only print warning for first few files
+                            print(f"Warning: {prot} missing C_beta, using C_alpha as substitute")
+                finally:
+                    cmap.close()  # Explicitly close the file
+                
                 example = self._serialize_example(prot, sequence, ca_dist_matrix, cb_dist_matrix)
                 writer.write(example)
+                # Clean up large arrays after writing to free memory
+                del sequence, ca_dist_matrix, cb_dist_matrix, example
             else:
                 print (pdb_file)
         print ("Writing {} done!".format(tfrecord_fn))

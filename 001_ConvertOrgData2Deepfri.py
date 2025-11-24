@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Galaxy 数据转换为 DeepFRI 格式（优化 OBO 加载）
+Cafa 数据转换为 DeepFRI 格式（优化 OBO 加载）
 
 特点：
 1. 只加载一次 GO OBO 文件
@@ -27,8 +27,8 @@ ONTOLOGY_CONFIG = {
 ONTOLOGY_ORDER = ['MF', 'BP', 'CC', 'PF']
 
 
-def load_galaxy_annotations(data_file):
-    """加载 Galaxy 格式的注释文件"""
+def load_cafa_annotations(data_file):
+    """加载 Cafa 格式的注释文件"""
     prot2goterms = {}
     all_goterms = set()
     
@@ -79,7 +79,7 @@ def get_go_term_name(go_id, go_graph=None):
 
 def create_deepfri_annotation_file(all_prot2annot,
                                    goterms_by_ont,
-                                   output_file='galaxy_annot.tsv',
+                                   output_file='cafa_annot.tsv',
                                    go_graph=None):
     """生成 DeepFRI 注释文件（符合原始格式，支持 MF/BP/CC/PF）"""
     with open(output_file, 'w', newline='', encoding='utf-8') as f:
@@ -118,32 +118,32 @@ def create_deepfri_annotation_file(all_prot2annot,
 
 def main():
     parser = argparse.ArgumentParser(
-        description='将Galaxy格式的数据转换为DeepFRI训练格式',
+        description='将Cafa格式的数据转换为DeepFRI训练格式',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument('--galaxy_dir', '-gd', type=str, default='galaxy', help='Galaxy数据目录')
-    parser.add_argument('--output_dir', '-od', type=str, default='galaxy_deepfri', help='输出目录')
+    parser.add_argument('--cafa_dir', '-gd', type=str, default='cafa', help='Cafa数据目录')
+    parser.add_argument('--output_dir', '-od', type=str, default='cafa_deepfri', help='输出目录')
     parser.add_argument('--ontology', '-ont', type=str, default='mf', choices=['mf','bp','cc','pf'], help='要转换的ontology')
-    parser.add_argument('--go_obo', '-go', type=str, default="resources/go.obo", help='GO ontology文件路径（可选）')
+    parser.add_argument('--go_obo', '-go', type=str, default="resources/go-basic.obo", help='GO ontology文件路径（可选）')
     args = parser.parse_args()
 
-    galaxy_dir = Path(args.galaxy_dir)
+    cafa_dir = Path(args.cafa_dir)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     ontology = args.ontology.upper()
 
-    print(f"输入目录: {galaxy_dir}")
+    print(f"输入目录: {cafa_dir}")
     print(f"输出目录: {output_dir}")
     print(f"Ontology: {ontology}")
 
     # 检查文件
-    train_data_file = galaxy_dir / f"{ontology}_train_data.tsv"
-    valid_data_file = galaxy_dir / f"{ontology}_validation_data.tsv"
-    test_data_file = galaxy_dir / f"{ontology}_test_data.tsv"
+    train_data_file = cafa_dir / f"{ontology}_train_data.tsv"
+    valid_data_file = cafa_dir / f"{ontology}_validation_data.tsv"
+    test_data_file = cafa_dir / f"{ontology}_test_data.tsv"
 
-    train_list_file = galaxy_dir / f"{ontology}_train_proteins.txt"
-    valid_list_file = galaxy_dir / f"{ontology}_validation_proteins.txt"
-    test_list_file = galaxy_dir / f"{ontology}_test_proteins.txt"
+    train_list_file = cafa_dir / f"{ontology}_train_proteins.txt"
+    valid_list_file = cafa_dir / f"{ontology}_validation_proteins.txt"
+    test_list_file = cafa_dir / f"{ontology}_test_proteins.txt"
 
     if not train_data_file.exists():
         print(f"错误: 找不到文件 {train_data_file}")
@@ -162,13 +162,13 @@ def main():
     ont_key = ONTOLOGY_CONFIG[ontology]['key']
     for data_file in [train_data_file, valid_data_file, test_data_file]:
         if data_file.exists():
-            prot2goterms, _ = load_galaxy_annotations(data_file)
+            prot2goterms, _ = load_cafa_annotations(data_file)
             for prot_id, go_list in prot2goterms.items():
                 all_prot2annot[prot_id][ont_key] = go_list
                 goterms_by_ont[ont_key].update(go_list)
 
     # 生成注释文件
-    annot_file = output_dir / f"galaxy_{ontology.lower()}_annot.tsv"
+    annot_file = output_dir / f"cafa_{ontology.lower()}_annot.tsv"
     create_deepfri_annotation_file(all_prot2annot, goterms_by_ont, annot_file, go_graph)
 
     # 生成训练/验证/测试集列表
