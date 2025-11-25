@@ -145,19 +145,36 @@ class DeepFRI(object):
         print(f"\n### 检查序列长度（验证pad_len={pad_len}是否足够）...")
         max_len = 0
         try:
-            # Sample a few records to find max length
-            sample_size = min(1000, n_train_records)
-            dataset = tf.data.TFRecordDataset(train_files[:1])  # Check first file only for speed
+            # Check all files to find the true maximum length
+            # This is important because sequences might be distributed across files
             features = {
                 "L": tf.io.FixedLenFeature([1], dtype=tf.int64)
             }
             count = 0
-            for serialized in dataset.take(sample_size):
-                parsed = tf.io.parse_single_example(serialized=serialized, features=features)
-                seq_len = int(parsed['L'][0])
-                max_len = max(max_len, seq_len)
-                count += 1
-            print(f"### 采样检查了 {count} 条记录，最大序列长度: {max_len}")
+            # Check all files, but limit per file to avoid being too slow
+            # For large datasets, check more records per file
+            records_per_file = min(5000, max(1000, n_train_records // len(train_files)))
+            print(f"### 每个文件检查最多 {records_per_file} 条记录...")
+            
+            for train_file in train_files:
+                try:
+                    dataset = tf.data.TFRecordDataset(train_file)
+                    for serialized in dataset.take(records_per_file):
+                        parsed = tf.io.parse_single_example(serialized=serialized, features=features)
+                        seq_len = int(parsed['L'][0])
+                        max_len = max(max_len, seq_len)
+                        count += 1
+                        # Early exit if we find a sequence longer than pad_len
+                        if seq_len > pad_len:
+                            print(f"### 警告: 发现序列长度 {seq_len} > pad_len {pad_len}，立即停止检查")
+                            break
+                    if max_len > pad_len:
+                        break
+                except Exception as e:
+                    print(f"### 警告: 检查文件 {train_file} 时出错: {e}")
+                    continue
+            
+            print(f"### 检查了 {count} 条记录，最大序列长度: {max_len}")
         except Exception as e:
             print(f"### 警告: 无法检查序列长度: {e}")
             max_len = 0
@@ -165,11 +182,13 @@ class DeepFRI(object):
         if max_len > pad_len:
             raise ValueError(
                 f"错误: pad_len={pad_len} 小于最大序列长度 {max_len}。\n"
-                f"请增加 pad_len 至少到 {max_len}（建议使用 {max_len + 100} 以留有余地）。\n"
-                f"可以在 002_TF_Train.sh 中修改 --pad_len 参数。"
+                f"请增加 pad_len 至少到 {max_len}（建议使用 {max_len + 200} 以留有余地）。\n"
+                f"可以在训练脚本中修改 --pad_len 参数。"
             )
         elif max_len > 0:
-            print(f"### pad_len={pad_len} 足够（最大序列长度: {max_len}）")
+            print(f"### pad_len={pad_len} 足够（检查到的最大序列长度: {max_len}）")
+        else:
+            print(f"### 警告: 无法验证 pad_len，请确保 pad_len={pad_len} 足够大")
 
         # train tfrecords
         batch_train = get_batched_dataset(train_tfrecord_fn,

@@ -171,13 +171,17 @@ python 002d1_auto_optimize_training.py --prot_list cafa_deepfri/CC_train.txt --n
 echo "[Step 1d] 检查最大序列长度（验证pad_len）"
 PAD_LEN=5000  # 默认值，如果检查发现需要更大，会自动调整
 if command -v python &> /dev/null; then
-    MAX_LEN_OUTPUT=$(python 000_check_max_seq_len.py "$TFRECORD_DIR/cafa_cc_train*" --max_samples 5000 2>&1)
+    # 检查所有记录以确保找到真正的最大长度
+    echo "正在检查所有TFRecord文件以找到最大序列长度（这可能需要一些时间）..."
+    MAX_LEN_OUTPUT=$(python 000_check_max_seq_len.py "$TFRECORD_DIR/cafa_cc_train*" --max_samples 0 2>&1)
     MAX_LEN=$(echo "$MAX_LEN_OUTPUT" | grep "最大长度:" | grep -oE '[0-9]+' | head -1)
     if [ ! -z "$MAX_LEN" ] && [ "$MAX_LEN" -gt 0 ]; then
         PAD_LEN=$((MAX_LEN + 200))
         echo "检测到最大序列长度: $MAX_LEN，自动设置 pad_len=$PAD_LEN"
     else
-        echo "使用默认 pad_len=$PAD_LEN（如果训练时仍然报错，请手动增加此值）"
+        echo "警告: 无法从输出中提取最大长度，使用默认 pad_len=$PAD_LEN"
+        echo "检查脚本输出:"
+        echo "$MAX_LEN_OUTPUT"
     fi
 else
     echo "无法运行检查脚本，使用默认 pad_len=$PAD_LEN"
