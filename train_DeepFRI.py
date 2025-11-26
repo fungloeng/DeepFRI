@@ -53,7 +53,9 @@ if __name__ == "__main__":
     # computing weights for imbalanced go classes
     class_sizes = counts[args.ontology]
     mean_class_size = np.mean(class_sizes)
-    pos_weights = mean_class_size / class_sizes
+    # Avoid division by zero: replace zeros with 1 to prevent warnings
+    class_sizes_safe = np.where(class_sizes == 0, 1, class_sizes)
+    pos_weights = mean_class_size / class_sizes_safe
     pos_weights = np.maximum(1.0, np.minimum(10.0, pos_weights))
     pos_weights = np.concatenate([pos_weights.reshape((len(pos_weights), 1)), pos_weights.reshape((len(pos_weights), 1))], axis=-1)
     pos_weights = {i: {0: pos_weights[i, 0], 1: pos_weights[i, 1]} for i in range(output_dim)}
@@ -103,11 +105,63 @@ if __name__ == "__main__":
                 continue
             
             cmap = np.load(npz_file)
-            sequence = str(cmap['seqres'])
+            # Properly convert seqres to string (handle numpy arrays correctly)
+            seqres = cmap['seqres']
+            if isinstance(seqres, np.ndarray) and seqres.ndim == 1 and seqres.dtype.kind in ("U", "S"):
+                sequence = "".join(seqres.tolist())
+            elif isinstance(seqres, np.ndarray) and seqres.ndim == 0:
+                v = seqres.item()
+                sequence = v if isinstance(v, str) else "".join(list(v))
+            elif isinstance(seqres, (list, tuple)):
+                sequence = "".join([str(x) for x in seqres])
+            elif isinstance(seqres, str):
+                sequence = seqres
+            else:
+                sequence = str(seqres)
+            
+            # Filter to allowed amino acid characters
+            allowed = set("ACDEFGHIKLMNPQRSTVWYBXZOU-")
+            sequence = "".join([c for c in sequence.upper() if c in allowed])
+            
+            if len(sequence) == 0:
+                print(f"Warning: {prot} has empty sequence, skipping")
+                skipped_count += 1
+                continue
+            
             Ca_dist = cmap['C_alpha']
+            
+            # Check dimension mismatch between sequence and contact map
+            seq_len = len(sequence)
+            cmap_size = Ca_dist.shape[0]
+            
+            if seq_len != cmap_size:
+                print(f"Warning: {prot} dimension mismatch: sequence length={seq_len}, contact map size={cmap_size}")
+                # Use the smaller dimension to ensure consistency
+                min_size = min(seq_len, cmap_size)
+                sequence = sequence[:min_size]
+                Ca_dist = Ca_dist[:min_size, :min_size]
+                seq_len = min_size  # Update seq_len after truncation
+                print(f"  Truncated to size {min_size}")
 
             A = np.double(Ca_dist < args.cmap_thresh)
             S = seq2onehot(sequence)
+
+            # Pad to pad_len if needed
+            current_seq_len = len(sequence)  # Use actual sequence length after any truncation
+            if current_seq_len < args.pad_len:
+                # Pad sequence
+                pad_seq = np.zeros((args.pad_len, S.shape[1]), dtype=S.dtype)
+                pad_seq[:current_seq_len, :] = S
+                S = pad_seq
+                # Pad contact map
+                pad_A = np.zeros((args.pad_len, args.pad_len), dtype=A.dtype)
+                pad_A[:current_seq_len, :current_seq_len] = A
+                A = pad_A
+            elif current_seq_len > args.pad_len:
+                # Truncate to pad_len
+                print(f"Warning: {prot} sequence length {current_seq_len} > pad_len {args.pad_len}, truncating")
+                S = S[:args.pad_len, :]
+                A = A[:args.pad_len, :args.pad_len]
 
             # ##
             S = S.reshape(1, *S.shape)

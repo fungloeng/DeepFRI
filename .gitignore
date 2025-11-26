@@ -32,8 +32,14 @@ tfrecords/
 org_galaxy/
 npz_source/
 *.npz
-cafa/
+
 galaxy/
 results/
 galaxy_npz_source/
+cafa/
+cafa_deepfri/
+cafa_npz_source/
+cafa_pdb_source/
+results_deepfri_cafa/
 
+log/

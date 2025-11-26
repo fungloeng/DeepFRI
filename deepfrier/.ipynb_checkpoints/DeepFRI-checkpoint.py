@@ -1,4 +1,5 @@
 import glob
+import os
 import tensorflow as tf
 
 from .utils import get_batched_dataset
@@ -141,54 +142,72 @@ class DeepFRI(object):
         if n_train_records == 0 or n_valid_records == 0:
             raise ValueError(f"TFRecord文件为空或无法读取。训练记录: {n_train_records}, 验证记录: {n_valid_records}")
         
-        # Check maximum sequence length in TFRecord files
+        # Ensure output directory exists for model saving
+        if self.model_name_prefix:
+            output_dir = os.path.dirname(self.model_name_prefix)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+                print(f"### 创建模型保存目录: {output_dir}")
+        
+        # Check maximum sequence length in TFRecord files - check ALL files to find true max
         print(f"\n### 检查序列长度（验证pad_len={pad_len}是否足够）...")
         max_len = 0
         try:
             # Check all files to find the true maximum length
-            # This is important because sequences might be distributed across files
             features = {
                 "L": tf.io.FixedLenFeature([1], dtype=tf.int64)
             }
-            count = 0
-            # Check all files, but limit per file to avoid being too slow
-            # For large datasets, check more records per file
-            records_per_file = min(5000, max(1000, n_train_records // len(train_files)))
-            print(f"### 每个文件检查最多 {records_per_file} 条记录...")
+            total_checked = 0
             
-            for train_file in train_files:
-                try:
-                    dataset = tf.data.TFRecordDataset(train_file)
-                    for serialized in dataset.take(records_per_file):
+            # Check training files
+            print(f"### 检查训练集文件（共 {len(train_files)} 个文件）...")
+            for tf_file in train_files:
+                dataset = tf.data.TFRecordDataset(tf_file)
+                for serialized in dataset:
+                    try:
                         parsed = tf.io.parse_single_example(serialized=serialized, features=features)
                         seq_len = int(parsed['L'][0])
                         max_len = max(max_len, seq_len)
-                        count += 1
-                        # Early exit if we find a sequence longer than pad_len
-                        if seq_len > pad_len:
-                            print(f"### 警告: 发现序列长度 {seq_len} > pad_len {pad_len}，立即停止检查")
-                            break
-                    if max_len > pad_len:
-                        break
-                except Exception as e:
-                    print(f"### 警告: 检查文件 {train_file} 时出错: {e}")
-                    continue
+                        total_checked += 1
+                    except Exception:
+                        continue
             
-            print(f"### 检查了 {count} 条记录，最大序列长度: {max_len}")
+            # Also check validation files
+            if len(valid_files) > 0:
+                print(f"### 检查验证集文件（共 {len(valid_files)} 个文件）...")
+                for tf_file in valid_files:
+                    dataset = tf.data.TFRecordDataset(tf_file)
+                    for serialized in dataset:
+                        try:
+                            parsed = tf.io.parse_single_example(serialized=serialized, features=features)
+                            seq_len = int(parsed['L'][0])
+                            max_len = max(max_len, seq_len)
+                            total_checked += 1
+                        except Exception:
+                            continue
+            
+            print(f"### 检查了所有 {total_checked} 条记录，最大序列长度: {max_len}")
         except Exception as e:
             print(f"### 警告: 无法检查序列长度: {e}")
             max_len = 0
         
-        if max_len > pad_len:
-            raise ValueError(
-                f"错误: pad_len={pad_len} 小于最大序列长度 {max_len}。\n"
-                f"请增加 pad_len 至少到 {max_len}（建议使用 {max_len + 200} 以留有余地）。\n"
-                f"可以在训练脚本中修改 --pad_len 参数。"
-            )
-        elif max_len > 0:
-            print(f"### pad_len={pad_len} 足够（检查到的最大序列长度: {max_len}）")
-        else:
-            print(f"### 警告: 无法验证 pad_len，请确保 pad_len={pad_len} 足够大")
+        # 自动调整 pad_len 以确保足够大
+        if max_len > 0:
+            # 计算推荐的 pad_len（最大长度 + 200 的安全余量）
+            recommended_pad_len = max_len + 200
+            
+            if pad_len < max_len:
+                # pad_len 不足，自动调整
+                print(f"### 警告: pad_len={pad_len} 小于最大序列长度 {max_len}")
+                print(f"### 自动调整 pad_len 从 {pad_len} 到 {recommended_pad_len}")
+                pad_len = recommended_pad_len
+            elif pad_len - max_len < 100:
+                # pad_len 余量不足，建议增加
+                print(f"### 警告: pad_len={pad_len} 仅比最大长度大 {pad_len - max_len}，建议至少增加 200 的余量")
+                print(f"### 自动调整 pad_len 从 {pad_len} 到 {recommended_pad_len}")
+                pad_len = recommended_pad_len
+            else:
+                print(f"### pad_len={pad_len} 足够（最大序列长度: {max_len}，余量: {pad_len - max_len}）")
 
         # train tfrecords
         batch_train = get_batched_dataset(train_tfrecord_fn,
@@ -232,6 +251,11 @@ class DeepFRI(object):
         return self.model(input_data).numpy()[0][:, 0]
 
     def plot_losses(self):
+        # Ensure output directory exists
+        if self.model_name_prefix:
+            output_dir = os.path.dirname(self.model_name_prefix)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
         plt.figure()
         plt.plot(self.history['loss'], '-')
         plt.plot(self.history['val_loss'], '-')
@@ -251,6 +275,11 @@ class DeepFRI(object):
         plt.savefig(self.model_name_prefix + '_model_accuracy.png', bbox_inches='tight')
 
     def save_model(self):
+        # Ensure output directory exists
+        if self.model_name_prefix:
+            output_dir = os.path.dirname(self.model_name_prefix)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
         self.model.save(self.model_name_prefix + '.hdf5')
 
     def load_model(self):

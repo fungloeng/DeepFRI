@@ -153,50 +153,138 @@ def collect_lengths(proteins, npz_dir):
     return lengths, missing, failures
 
 
-def find_optimal_pad_len(prot_list_file, npz_dir, max_memory_gb=8, target_percentile=95):
+def find_max_len_from_tfrecord(tfrecord_pattern, max_samples=10000):
+    """
+    从TFRecord文件直接读取最大序列长度（最准确的方法）
+    
+    参数:
+        tfrecord_pattern: TFRecord文件路径模式（支持通配符）
+        max_samples: 最大检查样本数（0表示检查所有）
+    
+    返回:
+        最大序列长度，如果无法读取则返回None
+    """
+    try:
+        import tensorflow as tf
+        import glob
+        
+        files = glob.glob(tfrecord_pattern)
+        if not files:
+            return None
+        
+        max_len = 0
+        count = 0
+        features = {
+            "L": tf.io.FixedLenFeature([1], dtype=tf.int64)
+        }
+        
+        print(f"  从TFRecord文件读取序列长度（最多检查{max_samples}条记录）...")
+        for tfrecord_file in files:
+            dataset = tf.data.TFRecordDataset(tfrecord_file)
+            for serialized in dataset:
+                if max_samples > 0 and count >= max_samples:
+                    break
+                try:
+                    parsed = tf.io.parse_single_example(serialized=serialized, features=features)
+                    seq_len = int(parsed['L'][0])
+                    max_len = max(max_len, seq_len)
+                    count += 1
+                except Exception:
+                    continue
+            if max_samples > 0 and count >= max_samples:
+                break
+        
+        if count > 0:
+            print(f"  从TFRecord检查了 {count} 条记录，最大序列长度: {max_len}")
+        return max_len if count > 0 else None
+    except Exception as e:
+        print(f"  警告: 无法从TFRecord读取序列长度: {e}")
+        return None
+
+
+def find_optimal_pad_len(prot_list_file, npz_dir, max_memory_gb=8, target_percentile=95,
+                         valid_list_file=None, tfrecord_train_pattern=None, tfrecord_valid_pattern=None):
     """
     找到最优的pad_len，确保内存使用在限制内
     
     参数:
-        prot_list_file: 蛋白质列表文件
+        prot_list_file: 训练集蛋白质列表文件
         npz_dir: npz文件目录
         max_memory_gb: 最大可用内存（GB）
         target_percentile: 目标分位数
+        valid_list_file: 验证集蛋白质列表文件（可选）
+        tfrecord_train_pattern: 训练集TFRecord文件模式（可选，如果提供则优先使用）
+        tfrecord_valid_pattern: 验证集TFRecord文件模式（可选）
     """
+    # 优先从TFRecord文件读取（如果已生成）
+    max_len_from_tfrecord = None
+    if tfrecord_train_pattern:
+        max_len_from_tfrecord = find_max_len_from_tfrecord(tfrecord_train_pattern, max_samples=10000)
+    if tfrecord_valid_pattern and max_len_from_tfrecord is not None:
+        max_len_valid = find_max_len_from_tfrecord(tfrecord_valid_pattern, max_samples=5000)
+        if max_len_valid is not None:
+            max_len_from_tfrecord = max(max_len_from_tfrecord, max_len_valid)
+    
+    # 从NPZ文件读取（作为备选或补充）
     proteins = load_protein_list(prot_list_file)
     lengths, missing, failures = collect_lengths(proteins, npz_dir)
     
-    if not lengths:
-        print("\n错误: 无法读取任何npz文件")
+    # 如果提供了验证集，也检查验证集
+    if valid_list_file and os.path.exists(valid_list_file):
+        print(f"\n同时检查验证集: {valid_list_file}")
+        valid_proteins = load_protein_list(valid_list_file)
+        valid_lengths, valid_missing, valid_failures = collect_lengths(valid_proteins, npz_dir)
+        if valid_lengths:
+            lengths.extend(valid_lengths)
+            print(f"  验证集: 成功读取 {len(valid_lengths)} 个序列")
+    
+    # 确定最大长度：优先使用TFRecord的结果（更准确）
+    if max_len_from_tfrecord is not None:
+        max_len = max_len_from_tfrecord
+        print(f"\n使用TFRecord文件中的最大序列长度: {max_len}")
+        if lengths:
+            arr = np.array(lengths)
+            npz_max_len = int(arr.max())
+            if npz_max_len > max_len:
+                print(f"  警告: NPZ文件中的最大长度({npz_max_len})大于TFRecord中的({max_len})")
+                print(f"  建议重新生成TFRecord文件，或使用更大的pad_len")
+    elif lengths:
+        arr = np.array(lengths)
+        max_len = int(arr.max())
+        p95_len = int(np.percentile(arr, target_percentile))
+        p90_len = int(np.percentile(arr, 90))
+        
+        print(f"\n序列长度统计（从NPZ文件）:")
+        print(f"  最大长度: {max_len}")
+        print(f"  95%分位数: {p95_len}")
+        print(f"  90%分位数: {p90_len}")
+    else:
+        print("\n错误: 无法读取任何npz文件或TFRecord文件")
         print("可能的原因:")
         print("  1. NPZ文件不存在于指定目录")
-        print("  2. 文件名格式不匹配")
-        print("  3. 路径不正确")
+        print("  2. TFRecord文件尚未生成")
+        print("  3. 文件名格式不匹配")
+        print("  4. 路径不正确")
         print(f"\n建议:")
         print(f"  1. 检查NPZ目录: {npz_dir}")
-        print(f"  2. 运行: ls {npz_dir} | head -10 查看实际文件名格式")
-        print(f"  3. 检查蛋白质列表文件中的ID格式")
+        print(f"  2. 如果TFRecord已生成，提供 --tfrecord_train_pattern 参数")
+        print(f"  3. 运行: ls {npz_dir} | head -10 查看实际文件名格式")
         print(f"  4. 如果NPZ文件确实不存在，可以跳过自动优化，使用默认参数训练")
         return None
-    
-    arr = np.array(lengths)
-    max_len = int(arr.max())
-    p95_len = int(np.percentile(arr, target_percentile))
-    p90_len = int(np.percentile(arr, 90))
-    
-    print(f"\n序列长度统计:")
-    print(f"  最大长度: {max_len}")
-    print(f"  95%分位数: {p95_len}")
-    print(f"  90%分位数: {p90_len}")
     
     # 尝试不同的pad_len，找到在内存限制内的最大值
     # 注意：pad_len必须 >= 最大序列长度，否则会报错
     # 所以我们从最大长度开始，如果内存不够就减小模型参数
-    test_lengths = [max_len, p95_len, p90_len]
     optimal = max_len  # 默认使用最大长度（必须）
     
     print(f"\n注意: pad_len必须 >= 最大序列长度({max_len})，否则训练会失败")
     print(f"将尝试在内存限制内使用最大长度，如果不够则减小模型参数")
+    
+    # 如果从TFRecord读取，直接使用最大长度；否则尝试分位数
+    if max_len_from_tfrecord is not None:
+        test_lengths = [max_len]
+    else:
+        test_lengths = [max_len, p95_len, p90_len]
     
     for test_len in test_lengths:
         # 粗略估算内存（假设1714个GO terms，默认模型参数）
@@ -232,14 +320,20 @@ def find_optimal_pad_len(prot_list_file, npz_dir, max_memory_gb=8, target_percen
 
 
 def generate_training_command(prot_list_file, npz_dir, annot_file, test_list, 
-                              ontology, model_name, max_memory_gb=8):
+                              ontology, model_name, max_memory_gb=8,
+                              valid_list_file=None, tfrecord_train_pattern=None, tfrecord_valid_pattern=None):
     """生成优化的训练命令"""
     
     # 1. 找到最优pad_len
     print("=" * 70)
     print("步骤1: 计算最优pad_len")
     print("=" * 70)
-    optimal_pad_len = find_optimal_pad_len(prot_list_file, npz_dir, max_memory_gb)
+    optimal_pad_len = find_optimal_pad_len(
+        prot_list_file, npz_dir, max_memory_gb,
+        valid_list_file=valid_list_file,
+        tfrecord_train_pattern=tfrecord_train_pattern,
+        tfrecord_valid_pattern=tfrecord_valid_pattern
+    )
     
     if optimal_pad_len is None:
         print("错误: 无法计算pad_len")
@@ -367,6 +461,12 @@ def main():
                        help='最大可用内存（GB）')
     parser.add_argument('--execute', action='store_true',
                        help='直接执行训练命令（否则只打印）')
+    parser.add_argument('--valid_list', type=str, default=None,
+                       help='验证集蛋白质列表文件（可选，用于更准确的pad_len计算）')
+    parser.add_argument('--tfrecord_train_pattern', type=str, default=None,
+                       help='训练集TFRecord文件模式，如 "./tfrecords/cafa_mf_train*"（如果提供则优先使用）')
+    parser.add_argument('--tfrecord_valid_pattern', type=str, default=None,
+                       help='验证集TFRecord文件模式，如 "./tfrecords/cafa_mf_valid*"（可选）')
     
     args = parser.parse_args()
     
@@ -378,7 +478,10 @@ def main():
         args.test_list,
         args.ontology,
         args.model_name,
-        args.max_memory_gb
+        args.max_memory_gb,
+        valid_list_file=args.valid_list,
+        tfrecord_train_pattern=args.tfrecord_train_pattern,
+        tfrecord_valid_pattern=args.tfrecord_valid_pattern
     )
     
     if result is None:

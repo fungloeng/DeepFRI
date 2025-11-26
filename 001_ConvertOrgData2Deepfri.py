@@ -27,23 +27,71 @@ ONTOLOGY_CONFIG = {
 ONTOLOGY_ORDER = ['MF', 'BP', 'CC', 'PF']
 
 
-def load_cafa_annotations(data_file):
-    """加载 Cafa 格式的注释文件"""
+def load_cafa_annotations(data_file, ontology='mf'):
+    """加载 Cafa 格式的注释文件
+    
+    CAFA 数据文件格式：
+    - MF/BP/CC: acc     gene_symbol     protein_name    seq_len sequence        GO_MF_labels    GO_BP_labels    GO_CC_labels
+    - PF: acc     GO_PF_labels (标签格式: PF01083;PF05042; 用分号分隔)
+    
+    GO labels 列索引：
+    - GO_MF_labels: 索引 5
+    - GO_BP_labels: 索引 6  
+    - GO_CC_labels: 索引 7
+    - GO_PF_labels: 索引 1 (PF数据文件只有两列)
+    """
     prot2goterms = {}
     all_goterms = set()
     
-    with open(data_file, 'r') as f:
+    # 根据 ontology 确定列索引
+    ont_col_map = {
+        'mf': 5,  # GO_MF_labels
+        'bp': 6,  # GO_BP_labels
+        'cc': 7,  # GO_CC_labels
+        'pf': 1   # GO_PF_labels (PF文件只有两列: acc, GO_PF_labels)
+    }
+    col_idx = ont_col_map.get(ontology.lower(), 5)
+    is_pf = (ontology.upper() == 'PF')
+    
+    with open(data_file, 'r', encoding='utf-8') as f:
         reader = csv.reader(f, delimiter='\t')
-        next(reader, None)  # 跳过表头
+        header = next(reader, None)  # 读取表头
+        
+        if header:
+            # 尝试从表头自动检测列索引
+            for i, col in enumerate(header):
+                col_upper = col.upper()
+                if ontology.upper() == 'MF' and 'GO_MF' in col_upper:
+                    col_idx = i
+                    break
+                elif ontology.upper() == 'BP' and 'GO_BP' in col_upper:
+                    col_idx = i
+                    break
+                elif ontology.upper() == 'CC' and 'GO_CC' in col_upper:
+                    col_idx = i
+                    break
+                elif ontology.upper() == 'PF' and ('GO_PF' in col_upper or 'PF' in col_upper):
+                    col_idx = i
+                    break
         
         for row in reader:
-            if len(row) < 2:
+            if len(row) <= col_idx:
                 continue
             prot_id = row[0].strip()
-            go_labels = row[1].strip()
+            go_labels = row[col_idx].strip() if len(row) > col_idx else ""
             
             if go_labels:
-                goterms = [go.strip() for go in go_labels.split(';') if go.strip()]
+                # PF使用分号分隔，其他使用逗号分隔
+                separator = ';' if is_pf else ','
+                labels = [go.strip() for go in go_labels.split(separator) if go.strip()]
+                
+                if is_pf:
+                    # PF格式: 接受 PFXXXXX 格式的标签
+                    goterms = [label for label in labels if label.startswith('PF')]
+                else:
+                    # GO格式: 只保留标准格式的 GO ID (GO:XXXXXXX)
+                    goterms = [label for label in labels if label.startswith('GO:')]
+                
                 prot2goterms[prot_id] = goterms
                 all_goterms.update(goterms)
             else:
@@ -73,6 +121,9 @@ def load_go_obo(go_obo_file):
 
 def get_go_term_name(go_id, go_graph=None):
     """获取 GO term 名称，只使用预加载的 go_graph"""
+    # PF标签不是GO terms，直接返回
+    if go_id.startswith('PF'):
+        return f"Pfam family {go_id}"
     if go_graph and go_id in go_graph.nodes:
         return go_graph.nodes[go_id].get('name', go_id)
     return f"GO term {go_id}"
@@ -124,7 +175,7 @@ def main():
     parser.add_argument('--cafa_dir', '-gd', type=str, default='cafa', help='Cafa数据目录')
     parser.add_argument('--output_dir', '-od', type=str, default='cafa_deepfri', help='输出目录')
     parser.add_argument('--ontology', '-ont', type=str, default='mf', choices=['mf','bp','cc','pf'], help='要转换的ontology')
-    parser.add_argument('--go_obo', '-go', type=str, default="resources/go-basic.obo", help='GO ontology文件路径（可选）')
+    parser.add_argument('--go_obo', '-go', type=str, default="resources/go.obo", help='GO ontology文件路径（可选）')
     args = parser.parse_args()
 
     cafa_dir = Path(args.cafa_dir)
@@ -162,7 +213,7 @@ def main():
     ont_key = ONTOLOGY_CONFIG[ontology]['key']
     for data_file in [train_data_file, valid_data_file, test_data_file]:
         if data_file.exists():
-            prot2goterms, _ = load_cafa_annotations(data_file)
+            prot2goterms, _ = load_cafa_annotations(data_file, ontology=ontology)
             for prot_id, go_list in prot2goterms.items():
                 all_prot2annot[prot_id][ont_key] = go_list
                 goterms_by_ont[ont_key].update(go_list)

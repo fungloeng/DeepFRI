@@ -173,7 +173,7 @@ def seq2onehot(seq):
 
 def _parse_function_gcn(serialized, n_goterms, channels=26, cmap_type='ca', cmap_thresh=10.0, ont='mf'):
     features = {
-        cmap_type + '_dist_matrix': tf.io.VarLenFeature(dtype=tf.float32),
+        cmap_type + '_dist_matrix': tf.io.FixedLenFeature([], dtype=tf.string),
         "seq_1hot": tf.io.VarLenFeature(dtype=tf.float32),
         ont + "_labels": tf.io.FixedLenFeature([n_goterms], dtype=tf.int64),
         "L": tf.io.FixedLenFeature([1], dtype=tf.int64)
@@ -186,9 +186,9 @@ def _parse_function_gcn(serialized, n_goterms, channels=26, cmap_type='ca', cmap
     L = parsed_example['L'][0]
 
     A_shape = tf.stack([L, L])
-    A = parsed_example[cmap_type + '_dist_matrix']
+    A_bytes = parsed_example[cmap_type + '_dist_matrix']
+    A = tf.io.decode_raw(A_bytes, tf.float16)
     A = tf.cast(A, tf.float32)
-    A = tf.sparse.to_dense(A)
     A = tf.reshape(A, A_shape)
 
     # threshold distances
@@ -252,9 +252,9 @@ def get_batched_dataset(filenames, batch_size=64, pad_len=1000, n_goterms=347, c
 
     # Parse the serialized data in the TFRecords files.
     if gcn:
-        dataset = dataset.map(lambda x: _parse_function_gcn(x, n_goterms=n_goterms, channels=channels, cmap_type=cmap_type, cmap_thresh=cmap_thresh, ont=ont))
+        dataset = dataset.map(lambda x: _parse_function_gcn(x, n_goterms=n_goterms, channels=channels, cmap_type=cmap_type, cmap_thresh=cmap_thresh, ont=ont), num_parallel_calls=AUTO)
     else:
-        dataset = dataset.map(lambda x: _parse_function_cnn(x, n_goterms=n_goterms, channels=channels, ont=ont))
+        dataset = dataset.map(lambda x: _parse_function_cnn(x, n_goterms=n_goterms, channels=channels, ont=ont), num_parallel_calls=AUTO)
 
     # 动态调整 shuffle buffer size 以避免内存不足
     # 当 pad_len 很大时，减小 buffer size
@@ -278,6 +278,7 @@ def get_batched_dataset(filenames, batch_size=64, pad_len=1000, n_goterms=347, c
     else:
         dataset = dataset.padded_batch(batch_size, padded_shapes=([pad_len, channels], [None, 2]))
     dataset = dataset.repeat()
+    dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
 
     return dataset
 

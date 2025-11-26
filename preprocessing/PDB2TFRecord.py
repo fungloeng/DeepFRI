@@ -50,6 +50,20 @@ LABEL_TO_KEY = {
     'primary_function': 'primary_function'
 }
 
+ONTOLOGY_ALIASES = {
+    'mf': 'molecular_function',
+    'bp': 'biological_process',
+    'cc': 'cellular_component',
+    'pf': 'primary_function'
+}
+
+ONT_FEATURE_MAP = {
+    'molecular_function': 'mf_labels',
+    'biological_process': 'bp_labels',
+    'cellular_component': 'cc_labels',
+    'primary_function': 'pf_labels'
+}
+
 
 def _parse_label(text):
     match = re.search(r'\(([^)]+)\)', text)
@@ -58,9 +72,15 @@ def _parse_label(text):
     return text.strip().lower()
 
 
-def load_GO_annot(filename):
+def load_GO_annot(filename, selected_onts=None):
     """ Load GO annotations (supports optional PF section) """
     onts = list(LABEL_TO_KEY.values())
+    if selected_onts is not None:
+        selected_onts = [ONTOLOGY_ALIASES.get(ont, ont) for ont in selected_onts]
+        selected_onts = [ont for ont in selected_onts if ont in onts]
+        if not selected_onts:
+            selected_onts = onts
+    active_onts = selected_onts or onts
     prot2annot = {}
     goterms = {ont: [] for ont in onts}
     gonames = {ont: [] for ont in onts}
@@ -93,9 +113,9 @@ def load_GO_annot(filename):
             if not row:
                 continue
             prot = row[0]
-            prot2annot[prot] = {ont: np.zeros(len(goterms[ont]), dtype=np.int64) for ont in onts}
+            prot2annot[prot] = {ont: np.zeros(len(goterms[ont]), dtype=np.uint8) for ont in active_onts}
             for value, key in zip(row[1:], column_keys):
-                if key is None or len(goterms[key]) == 0 or value == '':
+                if key is None or key not in active_onts or len(goterms[key]) == 0 or value == '':
                     continue
                 # Handle missing GO terms gracefully
                 indices = []
@@ -108,6 +128,9 @@ def load_GO_annot(filename):
                         print(f"Warning: GO term '{goterm}' not found in {key} list for protein {prot}. Skipping.")
                 if indices:
                     prot2annot[prot][key][indices] = 1.0
+
+    goterms = {ont: goterms[ont] for ont in active_onts}
+    gonames = {ont: gonames[ont] for ont in active_onts}
     return prot2annot, goterms, gonames
 
 
@@ -131,16 +154,26 @@ def load_EC_annot(filename):
 
 
 class GenerateTFRecord(object):
-    def __init__(self, prot_list, prot2annot, ec, npz_dir, tfrecord_fn, num_shards=30):
+    def __init__(self, prot_list, prot2annot, ec, npz_dir, tfrecord_fn, num_shards=30, records_per_shard=500, active_onts=None):
         self.prot_list = prot_list
         self.prot2annot = prot2annot
         self.ec = ec
         self.npz_dir = npz_dir
         self.tfrecord_fn = tfrecord_fn
-        self.num_shards = num_shards
+        if not self.ec:
+            self.active_onts = active_onts or list(ONT_FEATURE_MAP.keys())
+        else:
+            self.active_onts = []
+        if records_per_shard <= 0:
+            records_per_shard = 500
 
-        shard_size = len(prot_list)//num_shards
-        indices = [(i*(shard_size), (i+1)*(shard_size)) for i in range(0, num_shards)]
+        auto_shards = max(1, int(np.ceil(len(prot_list) / records_per_shard)))
+        self.num_shards = max(num_shards, auto_shards)
+        if self.num_shards != num_shards:
+            print(f"[Info] Adjusted shard count from {num_shards} to {self.num_shards} based on target {records_per_shard} records/shard")
+
+        shard_size = max(1, len(prot_list)//self.num_shards)
+        indices = [(i*(shard_size), (i+1)*(shard_size)) for i in range(0, self.num_shards)]
         indices[-1] = (indices[-1][0], len(prot_list))
         self.indices = indices
 
@@ -155,7 +188,7 @@ class GenerateTFRecord(object):
         return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
     def _dtype_feature(self):
-        return lambda array: tf.train.Feature(int64_list=tf.train.Int64List(value=array))
+        return lambda array: tf.train.Feature(int64_list=tf.train.Int64List(value=array.astype(np.int64, copy=False)))
 
     def _int_feature(self, value):
         return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
@@ -172,36 +205,58 @@ class GenerateTFRecord(object):
         if self.ec:
             d_feature['ec_labels'] = labels(self.prot2annot[prot_id])
         else:
-            d_feature['mf_labels'] = labels(self.prot2annot[prot_id]['molecular_function'])
-            d_feature['bp_labels'] = labels(self.prot2annot[prot_id]['biological_process'])
-            d_feature['cc_labels'] = labels(self.prot2annot[prot_id]['cellular_component'])
-            # 如果存在 primary_function（注释文件包含PF部分），也序列化 pf_labels
-            # 这确保了训练PF模型时所有TFRecord记录都包含pf_labels
-            if 'primary_function' in self.prot2annot[prot_id] and len(self.prot2annot[prot_id]['primary_function']) > 0:
-                d_feature['pf_labels'] = labels(self.prot2annot[prot_id]['primary_function'])
+            for ont in self.active_onts:
+                feature_key = ONT_FEATURE_MAP.get(ont)
+                if feature_key and ont in self.prot2annot[prot_id]:
+                    d_feature[feature_key] = labels(self.prot2annot[prot_id][ont])
 
-        d_feature['ca_dist_matrix'] = self._float_feature(ca_dist_matrix.reshape(-1))
-        d_feature['cb_dist_matrix'] = self._float_feature(cb_dist_matrix.reshape(-1))
+        # Store distance matrices as float16 bytes to reduce TFRecord size; decode at read time.
+        d_feature['ca_dist_matrix'] = self._bytes_feature(
+            ca_dist_matrix.astype(np.float16, copy=False).tobytes()
+        )
+        d_feature['cb_dist_matrix'] = self._bytes_feature(
+            cb_dist_matrix.astype(np.float16, copy=False).tobytes()
+        )
 
         example = tf.train.Example(features=tf.train.Features(feature=d_feature))
         return example.SerializeToString()
 
     def _convert_numpy_folder(self, idx):
         tfrecord_fn = self.tfrecord_fn + '_%0.2d-of-%0.2d.tfrecords' % (idx, self.num_shards)
-        # writer = tf.python_io.TFRecordWriter(tfrecord_fn)
         writer = tf.io.TFRecordWriter(tfrecord_fn)
-        print ("### Serializing %d examples into %s" % (len(self.prot_list), tfrecord_fn))
-
         tmp_prot_list = self.prot_list[self.indices[idx][0]:self.indices[idx][1]]
+        
+        print ("### Serializing %d examples into %s" % (len(tmp_prot_list), tfrecord_fn))
+        
+        success_count = 0
+        skip_count = 0
+        error_count = 0
 
         for i, prot in enumerate(tmp_prot_list):
             if i % 500 == 0:
-                print ("### Iter = %d/%d" % (i, len(tmp_prot_list)))
-            pdb_file = self.npz_dir + '/' + prot + '.npz'
-            if os.path.isfile(pdb_file):
-                # Load data and immediately close file
-                cmap = np.load(pdb_file)
-                try:
+                print ("### Iter = %d/%d (success=%d, skip=%d, error=%d)" % (i, len(tmp_prot_list), success_count, skip_count, error_count))
+            
+            pdb_file = os.path.join(self.npz_dir, prot + '.npz')
+            if not os.path.isfile(pdb_file):
+                # Try alternative paths
+                pdb_file_alt = self.npz_dir + '/' + prot + '.npz'
+                if not os.path.isfile(pdb_file_alt):
+                    skip_count += 1
+                    if i < 10:  # Only print first few missing files
+                        print(f"Warning: {prot} npz file not found")
+                    continue
+                pdb_file = pdb_file_alt
+            
+            try:
+                # Use context manager to ensure file is closed immediately
+                with np.load(pdb_file) as cmap:
+                    # Check if protein has annotation
+                    if prot not in self.prot2annot:
+                        skip_count += 1
+                        if i < 10:
+                            print(f"Warning: {prot} not found in annotations, skipping")
+                        continue
+                    
                     # Properly convert seqres to string (handle numpy arrays correctly)
                     seqres = cmap['seqres']
                     if isinstance(seqres, np.ndarray) and seqres.ndim == 1 and seqres.dtype.kind in ("U", "S"):
@@ -221,33 +276,58 @@ class GenerateTFRecord(object):
                     sequence = "".join([c for c in sequence.upper() if c in allowed])
                     
                     if len(sequence) == 0:
-                        print(f"Warning: {prot} has empty sequence after filtering, skipping")
+                        skip_count += 1
+                        if i < 10:
+                            print(f"Warning: {prot} has empty sequence after filtering, skipping")
                         continue
                     
-                    ca_dist_matrix = cmap['C_alpha'].copy()  # Copy to avoid keeping file open
-                    # Handle missing C_beta: use C_alpha as fallback
+                    # Extract arrays while file is open; convert to float16 to reduce memory footprint
+                    ca_dist_matrix = np.asarray(cmap['C_alpha'], dtype=np.float16)
                     if 'C_beta' in cmap:
-                        cb_dist_matrix = cmap['C_beta'].copy()
+                        cb_dist_matrix = np.asarray(cmap['C_beta'], dtype=np.float16)
                     else:
-                        # If C_beta is missing, use C_alpha as substitute
-                        cb_dist_matrix = ca_dist_matrix.copy()
+                        cb_dist_matrix = ca_dist_matrix  # share memory to avoid doubling usage
                         if i < 5:  # Only print warning for first few files
                             print(f"Warning: {prot} missing C_beta, using C_alpha as substitute")
-                finally:
-                    cmap.close()  # Explicitly close the file
                 
+                # File is now closed, serialize and write
                 example = self._serialize_example(prot, sequence, ca_dist_matrix, cb_dist_matrix)
                 writer.write(example)
-                # Clean up large arrays after writing to free memory
+                success_count += 1
+                
+                # Explicitly delete large arrays to free memory immediately
                 del sequence, ca_dist_matrix, cb_dist_matrix, example
-            else:
-                print (pdb_file)
-        print ("Writing {} done!".format(tfrecord_fn))
+                
+            except KeyError as e:
+                error_count += 1
+                if i < 10:
+                    print(f"Error: {prot} missing required key in npz: {e}")
+            except Exception as e:
+                error_count += 1
+                if i < 10:
+                    print(f"Error processing {prot}: {e}")
+                # Continue processing other proteins even if one fails
+        
+        writer.close()
+        print ("Writing {} done! (success={}, skip={}, error={})".format(tfrecord_fn, success_count, skip_count, error_count))
 
     def run(self, num_threads):
-        pool = multiprocessing.Pool(processes=num_threads)
+        # Limit number of threads to avoid OOM
+        # Each thread processes one shard, and each shard loads many npz files
+        # Use fewer threads if we have many shards to reduce memory pressure
+        effective_threads = min(num_threads, self.num_shards, 4)  # Cap at 4 to reduce memory usage
+        
+        if effective_threads < num_threads:
+            print(f"Warning: Reducing threads from {num_threads} to {effective_threads} to avoid memory issues")
+        
+        pool = multiprocessing.Pool(processes=effective_threads)
         shards = [idx for idx in range(0, self.num_shards)]
-        pool.map(self._convert_numpy_folder, shards)
+        
+        try:
+            pool.map(self._convert_numpy_folder, shards)
+        finally:
+            pool.close()
+            pool.join()
 
 
 if __name__ == "__main__":
@@ -260,15 +340,36 @@ if __name__ == "__main__":
                         help="Directory with distance maps saved in *.npz format to be loaded.")
     parser.add_argument('-num_threads', type=int, default=20, help="Number of threads (CPUs) to use in the computation.")
     parser.add_argument('-num_shards', type=int, default=20, help="Number of tfrecord files per protein set.")
+    parser.add_argument('--records_per_shard', type=int, default=400,
+                        help="Target number of records per shard; actual shard count will be max(num_shards, len(prot_list)/records_per_shard).")
+    parser.add_argument('--ontology', type=str, default='all', choices=['mf', 'bp', 'cc', 'pf', 'all'],
+                        help="Ontology focus for TFRecord generation; reduces memory usage when set.")
     parser.add_argument('-tfr_prefix', type=str, default='/mnt/ceph/users/vgligorijevic/ContactMaps/TFRecords/PDB_GO_train',
                         help="Directory with tfrecord files for model training.")
     args = parser.parse_args()
 
     prot_list = load_list(args.prot_list)
+    ont_arg = args.ontology.lower()
+    if ont_arg == 'all':
+        selected_onts = None
+    else:
+        selected_onts = [ONTOLOGY_ALIASES.get(ont_arg, ont_arg)]
+
     if args.ec:
         prot2annot, _ = load_EC_annot(args.annot)
+        active_onts = []
     else:
-        prot2annot, _, _ = load_GO_annot(args.annot)
+        prot2annot, _, _ = load_GO_annot(args.annot, selected_onts=selected_onts)
+        active_onts = selected_onts or list(ONT_FEATURE_MAP.keys())
 
-    tfr = GenerateTFRecord(prot_list, prot2annot, args.ec, args.npz_dir, args.tfr_prefix, num_shards=args.num_shards)
+    tfr = GenerateTFRecord(
+        prot_list,
+        prot2annot,
+        args.ec,
+        args.npz_dir,
+        args.tfr_prefix,
+        num_shards=args.num_shards,
+        records_per_shard=args.records_per_shard,
+        active_onts=active_onts
+    )
     tfr.run(num_threads=args.num_threads)
