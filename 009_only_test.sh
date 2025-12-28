@@ -435,40 +435,40 @@ echo "=== Processing PF ==="
 #     --batch_size 1
 
 
-# # testset as test
-# python 000_predict_test_set.py \
-#     --model_name trained_models/CafaModel_PF \
-#     --test_list cafa_deepfri/PF_test.csv \
-#     --test_npz_dir $NPZ_DIR \
-#     --annot_fn cafa_deepfri/cafa_pf_annot.tsv \
-#     --ontology pf \
-#     --gc_layer GraphConv \
-#     --output_file $RESULTS_DIR/pf_test_predictions.pckl
+# testset as test
+python 000_predict_test_set.py \
+    --model_name trained_models/CafaModel_PF \
+    --test_list cafa_deepfri/PF_test.csv \
+    --test_npz_dir $NPZ_DIR \
+    --annot_fn cafa_deepfri/cafa_pf_annot.tsv \
+    --ontology pf \
+    --gc_layer GraphConv \
+    --output_file $RESULTS_DIR/pf_test_predictions.pckl
+
+python 000_export_results.py \
+    --results_file $RESULTS_DIR/pf_test_predictions.pckl \
+    --output_prefix $RESULTS_DIR/pf_test_preds_deepfri_run1 \
+    --threshold 0.0
 
 # python 000_export_results.py \
 #     --results_file $RESULTS_DIR/pf_test_predictions.pckl \
-#     --output_prefix $RESULTS_DIR/pf_test_preds_deepfri_run1 \
+#     --output_prefix $RESULTS_DIR/pf_test_preds_deepfri_run2 \
+#     --threshold 0.0
+    
+# python 000_export_results.py \
+#     --results_file $RESULTS_DIR/pf_test_predictions.pckl \
+#     --output_prefix $RESULTS_DIR/pf_test_preds_deepfri_run3 \
+#     --threshold 0.0
+    
+# python 000_export_results.py \
+#     --results_file $RESULTS_DIR/pf_test_predictions.pckl \
+#     --output_prefix $RESULTS_DIR/pf_test_preds_deepfri_run4 \
 #     --threshold 0.0
 
-python 000_export_results.py \
-    --results_file $RESULTS_DIR/pf_test_predictions.pckl \
-    --output_prefix $RESULTS_DIR/pf_test_preds_deepfri_run2 \
-    --threshold 0.0
-    
-python 000_export_results.py \
-    --results_file $RESULTS_DIR/pf_test_predictions.pckl \
-    --output_prefix $RESULTS_DIR/pf_test_preds_deepfri_run3 \
-    --threshold 0.0
-    
-python 000_export_results.py \
-    --results_file $RESULTS_DIR/pf_test_predictions.pckl \
-    --output_prefix $RESULTS_DIR/pf_test_preds_deepfri_run4 \
-    --threshold 0.0
-
-python 000_export_results.py \
-    --results_file $RESULTS_DIR/pf_test_predictions.pckl \
-    --output_prefix $RESULTS_DIR/pf_test_preds_deepfri_run5 \
-    --threshold 0.0
+# python 000_export_results.py \
+#     --results_file $RESULTS_DIR/pf_test_predictions.pckl \
+#     --output_prefix $RESULTS_DIR/pf_test_preds_deepfri_run5 \
+#     --threshold 0.0
 
 # # 清理PF的TFRecord文件，释放空间
 # echo "[Step 1e] 清理PF的TFRecord文件..."

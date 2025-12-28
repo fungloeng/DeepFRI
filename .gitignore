@@ -43,3 +43,5 @@ cafa_pdb_source/
 results_deepfri_cafa/
 
 log/
+
+*.obo
