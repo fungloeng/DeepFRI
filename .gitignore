@@ -45,3 +45,11 @@ results_deepfri_cafa/
 log/
 resources/
 *.obo
+
+.ipynb_checkpoints
+
+results_deepfri_cafa.tar.gz
+
+preprocessing/data/
+
+log/
